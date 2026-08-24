@@ -1,0 +1,13 @@
+Third-party components
+======================
+
+AutoHotkey v2 interpreter
+-------------------------
+Encore.exe is the unmodified official AutoHotkey64.exe, renamed; it runs
+the Encore.ahk script beside it.
+Copyright (c) AutoHotkey Foundation and contributors
+https://github.com/AutoHotkey/AutoHotkey
+Licensed under the GNU General Public License v2.
+
+All other code in this repository is original to the project and covered by
+the LICENSE file (MIT).

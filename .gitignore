@@ -1,0 +1,12 @@
+# Runtime artifacts
+error.log
+
+# User configuration (auto-generated with defaults on first run)
+Encore config.ini
+
+# The user's recordings
+macros/
+
+# Build output (attached to GitHub releases instead) and cached toolchain
+dist/
+build/
