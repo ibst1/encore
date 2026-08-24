@@ -48,8 +48,15 @@ if (Test-Path $dist) {
 New-Item -ItemType Directory -Force $dist | Out-Null
 
 # the renamed stock interpreter auto-loads Encore.ahk beside it
+New-Item -ItemType Directory -Force (Join-Path $dist 'lib') | Out-Null
 Copy-Item $base (Join-Path $dist 'Encore.exe')
 Copy-Item (Join-Path $root 'Encore.ahk') $dist
+Copy-Item (Join-Path $root 'ComVar.ahk') $dist
+Copy-Item (Join-Path $root 'Promise.ahk') $dist
+foreach ($f in 'WebView2.ahk', 'WebView2Loader.dll', 'JSON.ahk') {
+    Copy-Item (Join-Path $root "lib\$f") (Join-Path $dist 'lib')
+}
+Copy-Item (Join-Path $root 'ui') (Join-Path $dist 'ui') -Recurse
 Copy-Item (Join-Path $root 'app.ico') $dist
 Copy-Item (Join-Path $root 'rec.ico') $dist
 Copy-Item (Join-Path $root 'play.ico') $dist
@@ -58,6 +65,6 @@ Copy-Item (Join-Path $root 'LICENSE') $dist
 Copy-Item (Join-Path $root 'THIRD-PARTY.txt') $dist
 
 $zip = Join-Path $dist "Encore-$version.zip"
-$contents = @('Encore.exe', 'Encore.ahk', 'app.ico', 'rec.ico', 'play.ico', 'README.md', 'LICENSE', 'THIRD-PARTY.txt') | ForEach-Object { Join-Path $dist $_ }
+$contents = @('Encore.exe', 'Encore.ahk', 'ComVar.ahk', 'Promise.ahk', 'lib', 'ui', 'app.ico', 'rec.ico', 'play.ico', 'README.md', 'LICENSE', 'THIRD-PARTY.txt') | ForEach-Object { Join-Path $dist $_ }
 Compress-Archive -Path $contents -DestinationPath $zip -Force
 Write-Host "Done: $zip"

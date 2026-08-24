@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0 (2026-08-24)
+
+- Management window (WebView2): browse recordings with event counts and
+  durations, read the selected macro as human-readable steps, select and
+  delete steps, rename/delete recordings, per-recording playback
+  overrides (repeat, pause, speed, mode) stored in the macro file, and a
+  settings dialog for everything that previously required editing the
+  ini. Opens via tray double-click, the tray menu or IPC command 5.
+
 ## 1.1.0 (2026-08-24)
 
 - The play key (F12) also stops an ongoing recording.

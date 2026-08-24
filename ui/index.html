@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Encore</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="topbar">
+  <button id="btnRecord">● Record</button>
+  <button id="btnPlay" class="primary">▶ Play</button>
+  <button id="btnStop" disabled>■ Stop</button>
+  <span id="status"></span>
+  <span class="spacer"></span>
+  <button id="btnSettings">⚙ Settings</button>
+</div>
+
+<div id="main">
+  <div id="sidebar">
+    <div class="side-head">Recordings <button id="btnFolder" title="Open the recordings folder">Folder</button></div>
+    <ul id="recList"></ul>
+  </div>
+  <div id="content">
+    <div id="macroBar">
+      <span id="macroName">–</span>
+      <span id="macroMeta"></span>
+      <span class="spacer"></span>
+      <button id="btnRename">Rename</button>
+      <button id="btnDelete">Delete</button>
+      <button id="btnDelSteps" disabled>Delete selected steps</button>
+    </div>
+    <div id="propsBar">
+      <label>This recording:</label>
+      <label>Repeat <input id="pRepeat" type="text" placeholder="global"></label>
+      <label>Pause ms <input id="pPause" type="text" placeholder="global"></label>
+      <label>Speed <input id="pSpeed" type="text" placeholder="global"></label>
+      <label>Mode
+        <select id="pMode">
+          <option value="">global</option>
+          <option value="original">original</option>
+          <option value="fixed">fixed</option>
+        </select>
+      </label>
+      <button id="btnSaveProps">Save</button>
+      <span class="hint">empty = use the global settings</span>
+    </div>
+    <div id="stepsWrap">
+      <div id="stepsEmpty">No recording selected.</div>
+      <table id="steps"><tbody id="stepsBody"></tbody></table>
+      <div class="truncNote" id="truncNote" hidden>Long recording — only the first part is shown.</div>
+    </div>
+  </div>
+</div>
+
+<div id="settingsModal" hidden>
+  <div id="settingsBox">
+    <h2>Settings</h2>
+    <div class="row"><label>Record hotkey</label><input id="sRecordKey" type="text"></div>
+    <div class="row"><label>Play hotkey</label><input id="sPlayKey" type="text"></div>
+    <div class="row"><label>Playback mode</label>
+      <select id="sMode"><option value="original">original timing</option><option value="fixed">fixed delay</option></select>
+    </div>
+    <div class="row"><label>Speed factor (original mode)</label><input id="sSpeed" type="text"></div>
+    <div class="row"><label>Fixed delay ms</label><input id="sFixedDelay" type="text"></div>
+    <div class="row"><label>Repeat (0 = until aborted)</label><input id="sRepeat" type="text"></div>
+    <div class="row"><label>Pause between repeats ms</label><input id="sRepeatPause" type="text"></div>
+    <div class="row"><label>Window anchors</label>
+      <select id="sAnchors"><option value="1">on</option><option value="0">off</option></select>
+    </div>
+    <div class="btns">
+      <button id="btnSettingsCancel">Cancel</button>
+      <button id="btnSettingsSave" class="primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

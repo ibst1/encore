@@ -9,5 +9,24 @@ Copyright (c) AutoHotkey Foundation and contributors
 https://github.com/AutoHotkey/AutoHotkey
 Licensed under the GNU General Public License v2.
 
+WebView2.ahk, Promise.ahk, ComVar.ahk
+-------------------------------------
+Author:  thqby
+Source:  https://github.com/thqby/ahk2_lib
+License: MIT
+
+JSON.ahk
+--------
+Author:  thqby
+Source:  https://github.com/thqby/ahk2_lib
+License: MIT
+
+WebView2Loader.dll (x64)
+------------------------
+Author:  Microsoft Corporation
+Source:  Microsoft.Web.WebView2 SDK
+         (https://www.nuget.org/packages/Microsoft.Web.WebView2/)
+License: Microsoft WebView2 SDK license (redistributable loader)
+
 All other code in this repository is original to the project and covered by
 the LICENSE file (MIT).
