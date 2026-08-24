@@ -97,6 +97,12 @@ function groupEvents() {
       push('⏱', 'Wait ' + e.ms + ' ms', i, i)
         .edit = { type: 'pause', ms: e.ms };
       i++;
+    } else if (e.kind === 'ww') {
+      push('⏳', 'Wait for window <b>' + esc(e.exe || e.title) + '</b>'
+        + (e.title && e.exe ? ' <span class="txt">' + esc(e.title) + '</span>' : '')
+        + ' (≤ ' + fmtDur(e.ms) + (e.active ? ', active' : '') + ')', i, i)
+        .edit = { type: 'waitwin', exe: e.exe, title: e.title, timeout: e.ms, active: e.active };
+      i++;
     } else if (e.kind === 'g') {
       let what = e.state === 1 ? 'Maximize' : e.state === -1 ? 'Minimize'
         : 'Move/resize to (' + e.x + ', ' + e.y + ') ' + e.w + '×' + e.h;
@@ -327,6 +333,8 @@ function showStepModal(mode, preset) {
   $('stKeys').value = p.keys || '';
   $('stExe').value = p.exe || '';
   $('stTitle').value = p.title || '';
+  $('stTimeout').value = p.timeout != null ? p.timeout : '10000';
+  $('stActive').value = p.active ? '1' : '0';
   applyStepType();
   $('stepModal').hidden = false;
 }
@@ -334,7 +342,7 @@ function showStepModal(mode, preset) {
 function applyStepType() {
   const type = document.getElementById('stType').value;
   document.querySelectorAll('.st-field').forEach(el => {
-    el.style.display = el.dataset.for === type ? '' : 'none';
+    el.style.display = el.dataset.for.split(' ').includes(type) ? '' : 'none';
   });
 }
 
@@ -358,6 +366,8 @@ function renderState() {
   document.getElementById('pPause').value = p.pause != null ? p.pause : '';
   document.getElementById('pSpeed').value = p.speed != null ? p.speed : '';
   document.getElementById('pMode').value = p.mode || '';
+  document.getElementById('pHotkey').value = p.hotkey || '';
+  document.getElementById('pCoords').value = p.coords || '';
 }
 
 // ── AHK entry points ───────────────────────────────────────────────────
@@ -369,6 +379,10 @@ window.receiveMacro = function (payload) {
   events = payload.events || [];
   truncated = !!payload.truncated;
   renderSteps();
+};
+window.setMacroFolder = function (dir) {
+  const el = document.getElementById('sMacroFolder');
+  if (el) el.value = dir;
 };
 
 // ── UI wiring ──────────────────────────────────────────────────────────
@@ -411,7 +425,8 @@ window.addEventListener('DOMContentLoaded', () => {
   $('btnStepSave').addEventListener('click', () => {
     const spec = { type: $('stType').value, text: $('stText').value,
       ms: $('stMs').value.trim(), keys: $('stKeys').value,
-      exe: $('stExe').value.trim(), title: $('stTitle').value.trim() };
+      exe: $('stExe').value.trim(), title: $('stTitle').value.trim(),
+      timeout: $('stTimeout').value.trim(), active: $('stActive').value };
     if (stepMode.mode === 'edit')
       post({ action: 'setStep', from: stepMode.from, to: stepMode.to, ...spec });
     else
@@ -421,7 +436,8 @@ window.addEventListener('DOMContentLoaded', () => {
   $('btnSaveProps').addEventListener('click', () => {
     post({ action: 'saveMacroSettings',
       repeat: $('pRepeat').value.trim(), pause: $('pPause').value.trim(),
-      speed: $('pSpeed').value.trim(), mode: $('pMode').value });
+      speed: $('pSpeed').value.trim(), mode: $('pMode').value,
+      hotkey: $('pHotkey').value.trim(), coords: $('pCoords').value });
   });
   $('btnSettings').addEventListener('click', () => {
     if (!state) return;
@@ -434,15 +450,21 @@ window.addEventListener('DOMContentLoaded', () => {
     $('sRepeat').value = s.repeat;
     $('sRepeatPause').value = s.repeatPauseMs;
     $('sAnchors').value = s.anchors ? '1' : '0';
+    $('sCountdown').value = s.countdownMs != null ? s.countdownMs : '1000';
+    $('sOsd').value = s.playbackOsd ? '1' : '0';
+    $('sMacroFolder').value = s.macroFolder || '';
     $('settingsModal').hidden = false;
   });
+  $('sBrowse').addEventListener('click', () => post({ action: 'browseMacroFolder' }));
   $('btnSettingsCancel').addEventListener('click', () => { $('settingsModal').hidden = true; });
   $('btnSettingsSave').addEventListener('click', () => {
     post({ action: 'saveSettings',
       recordKey: $('sRecordKey').value.trim(), playKey: $('sPlayKey').value.trim(),
       mode: $('sMode').value, speed: $('sSpeed').value.trim(),
       fixedDelayMs: $('sFixedDelay').value.trim(), repeat: $('sRepeat').value.trim(),
-      repeatPauseMs: $('sRepeatPause').value.trim(), anchors: $('sAnchors').value });
+      repeatPauseMs: $('sRepeatPause').value.trim(), anchors: $('sAnchors').value,
+      countdownMs: $('sCountdown').value.trim(), playbackOsd: $('sOsd').value,
+      macroFolder: $('sMacroFolder').value.trim() });
     $('settingsModal').hidden = true;
   });
   post({ action: 'ready' });

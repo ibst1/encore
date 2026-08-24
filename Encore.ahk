@@ -62,6 +62,16 @@ global g_maxEvents     := 100000
 global g_windowAnchors := true
 global g_repeat        := 1    ; playback repetitions, 0 = until aborted
 global g_repeatPauseMs := 1000
+global g_countdownMs   := 1000 ; pause before playback starts (0 = none)
+global g_playOsd       := true ; progress overlay during playback
+global g_macroHotkeys  := Map()  ; registered per-macro hotkey -> file path
+global g_fgX           := 0    ; recording: position of the foreground window
+global g_fgY           := 0
+global g_playRef       := 0    ; playback: hwnd of the last activated anchor window
+global g_playRefX      := 0
+global g_playRefY      := 0
+global g_playRefT      := 0
+global g_playCoords    := ""   ; "" = screen coordinates, "window" = relative
 
 ; Command line:
 ;   Encore.ahk <macro>                    play that macro and exit
@@ -183,6 +193,8 @@ StartRecording() {
     Hotkey("~*WheelLeft",  RecWheel.Bind(-120, 0x20E), "On")
     Hotkey("~*WheelRight", RecWheel.Bind(120,  0x20E), "On")
     g_recording := true
+    global g_fgX, g_fgY
+    try WinGetPos(&g_fgX, &g_fgY, , , WinGetID("A"))
     if g_windowAnchors {
         ; anchor to the window that is active as the macro begins, then to
         ; every switch — playback re-activates that program at each anchor
@@ -255,7 +267,8 @@ PollMouse() {
         return
     if (mx != g_lastX || my != g_lastY) {
         g_lastX := mx, g_lastY := my
-        g_events.Push({t: A_TickCount, kind: "m", msg: 0x200, x: mx, y: my, data: 0})
+        g_events.Push({t: A_TickCount, kind: "m", msg: 0x200, x: mx, y: my, data: 0
+            , wx: mx - g_fgX, wy: my - g_fgY})
     }
     for b, def in BTN {
         now := false
@@ -272,7 +285,8 @@ PollMouse() {
                 }
             }
             g_events.Push({t: A_TickCount, kind: "m", msg: def[now ? 1 : 2]
-                , x: mx, y: my, data: def[3], cls: cls})
+                , x: mx, y: my, data: def[3], cls: cls
+                , wx: mx - g_fgX, wy: my - g_fgY})
         }
     }
 }
@@ -284,7 +298,7 @@ RecWheel(delta, msg, *) {
     mx := 0, my := 0
     try MouseGetPos(&mx, &my)
     g_events.Push({t: A_TickCount, kind: "m", msg: msg, x: mx, y: my
-        , data: (delta & 0xFFFF) << 16})
+        , data: (delta & 0xFFFF) << 16, wx: mx - g_fgX, wy: my - g_fgY})
 }
 
 ; Records a "switch to program X" anchor whenever the foreground window
@@ -308,6 +322,10 @@ RecordActiveWindow() {
     try cls := WinGetClass(hwnd)
     if SKIP.Has(cls)
         return
+    ; track the foreground window's position — mouse events store their
+    ; offset from it, enabling window-relative playback (coords=window)
+    global g_fgX, g_fgY
+    try WinGetPos(&g_fgX, &g_fgY, , , hwnd)
     if (hwnd != g_lastActive) {
         FlushGeo()   ; pending geometry change of the previous window
         g_lastActive := hwnd
@@ -604,7 +622,7 @@ EffNum(key, glob) {
 }
 
 Play(*) {
-    global g_playing, g_stopPlay
+    global g_playing, g_stopPlay, g_playRef, g_playRefT, g_playCoords
     if g_recording {
         StopRecording()   ; the play key doubles as stop while recording
         return
@@ -624,6 +642,25 @@ Play(*) {
     ; a still-held Win/Ctrl would combine with the replayed keys
     for m in ["LWin", "RWin", "LShift", "RShift", "LCtrl", "RCtrl", "LAlt", "RAlt"]
         KeyWait m, "T2"
+    ; optional countdown so the user can settle focus before replay starts
+    if (g_countdownMs > 0) {
+        waitedC := 0
+        while (waitedC < g_countdownMs) {
+            ToolTip("▶ Starting in " Round((g_countdownMs - waitedC) / 1000.0, 1) " s — Esc aborts"
+                , A_ScreenWidth // 2 - 110, 40, 2)
+            Sleep 100
+            waitedC += 100
+            if (g_stopPlay || GetKeyState("Escape", "P"))
+                break
+        }
+        ToolTip(, , , 2)
+        if (g_stopPlay || GetKeyState("Escape", "P")) {
+            g_playing := false
+            InitTray()
+            Notify("■ Playback aborted", 1500)
+            return
+        }
+    }
     ; effective playback values: per-recording overrides beat the globals
     reps := EffInt("repeat", g_repeat)
     repPause := EffInt("pause", g_repeatPauseMs)
@@ -640,6 +677,11 @@ Play(*) {
     list := (mode = "fixed") ? FixedModeList() : g_events
     downKeys := Map()      ; vk → sc for keys currently sent down
     downBtns := Map()      ; button name → true
+    g_playRef := 0, g_playRefT := 0
+    g_playCoords := g_curProps.Get("coords", "")
+    osdName := g_currentFile != ""
+        ? SubStr(SubStr(g_currentFile, InStr(g_currentFile, "\", , -1) + 1), 1, -6) : ""
+    evIdx := 0
     ; the try guarantees the cleanup below always runs — an error midway
     ; must never leave g_playing stuck (every later Play would silently
     ; be treated as an abort request)
@@ -653,6 +695,11 @@ Play(*) {
             for e in list {
                 if (stopped := (g_stopPlay || GetKeyState("Escape", "P")))
                     break
+                evIdx += 1
+                if (g_playOsd && Mod(evIdx, 20) = 1)
+                    ToolTip("▶ " osdName " — " evIdx "/" (list.Length * (reps ? reps : 1))
+                        (reps != 1 ? " · rep " rep (reps ? "/" reps : "") : "")
+                        " — Esc aborts", A_ScreenWidth // 2 - 140, 40, 2)
                 if (mode = "fixed") {
                     Sleep fixedDelay
                 } else {
@@ -686,6 +733,8 @@ Play(*) {
                         if (g_stopPlay || GetKeyState("Escape", "P"))
                             break
                     }
+                } else if (e.kind = "ww") {
+                    ReplayWaitWindow(e)
                 } else {
                     ReplayMouse(e, downBtns)
                 }
@@ -711,6 +760,7 @@ Play(*) {
         try Send "{" Format("vk{:X}sc{:03X}", vk, sc) " up}"
     for btn in downBtns
         try Click btn " Up"
+    ToolTip(, , , 2)
     g_playing := false
     InitTray()
     if err {
@@ -721,30 +771,51 @@ Play(*) {
     }
 }
 
+; Playback position of a mouse event: screen coordinates by default, or —
+; when the recording's coords=window — the recorded offset applied to the
+; current position of the last anchored window (cached for 500 ms).
+PlayXY(e, &x, &y) {
+    global g_playRef, g_playRefX, g_playRefY, g_playRefT
+    x := e.x, y := e.y
+    if (g_playCoords != "window" || !e.HasOwnProp("wx") || !g_playRef)
+        return
+    if (A_TickCount - g_playRefT > 500) {
+        rx := "", ry := ""
+        try WinGetPos(&rx, &ry, , , g_playRef)
+        if (rx = "")
+            return
+        g_playRefX := rx, g_playRefY := ry, g_playRefT := A_TickCount
+    }
+    x := g_playRefX + e.wx
+    y := g_playRefY + e.wy
+}
+
 ReplayMouse(e, downBtns) {
     static DOWN := Map(0x201, "Left", 0x204, "Right", 0x207, "Middle")
     static UP   := Map(0x202, "Left", 0x205, "Right", 0x208, "Middle")
     static DBL  := Map(0x203, "Left", 0x206, "Right", 0x209, "Middle")
+    PlayXY(e, &px, &py)
     if (e.msg = 0x200) {                       ; move
-        MouseMove(e.x, e.y, 0)
+        MouseMove(px, py, 0)
     } else if DBL.Has(e.msg) {                 ; fused double-click
-        MouseMove(e.x, e.y, 0)
+        MouseMove(px, py, 0)
         Click DBL[e.msg] " 2"
     } else if DOWN.Has(e.msg) {
-        MouseMove(e.x, e.y, 0)
+        MouseMove(px, py, 0)
         Click DOWN[e.msg] " Down"
         downBtns[DOWN[e.msg]] := true
     } else if UP.Has(e.msg) {
-        MouseMove(e.x, e.y, 0)
+        MouseMove(px, py, 0)
         Click UP[e.msg] " Up"
-        downBtns.Delete(UP[e.msg])
+        if downBtns.Has(UP[e.msg])
+            downBtns.Delete(UP[e.msg])
     } else if (e.msg = 0x20B || e.msg = 0x20C) {   ; X buttons
         btn := ((e.data >> 16) & 0xFFFF) = 2 ? "X2" : "X1"
-        MouseMove(e.x, e.y, 0)
+        MouseMove(px, py, 0)
         Click btn (e.msg = 0x20B ? " Down" : " Up")
         if (e.msg = 0x20B)
             downBtns[btn] := true
-        else
+        else if downBtns.Has(btn)
             downBtns.Delete(btn)
     } else if (e.msg = 0x20A || e.msg = 0x20E) {   ; wheel / horizontal wheel
         delta := (e.data >> 16) & 0xFFFF
@@ -753,11 +824,34 @@ ReplayMouse(e, downBtns) {
         notches := Abs(delta) // 120
         if (notches < 1)
             notches := 1
-        MouseMove(e.x, e.y, 0)
+        MouseMove(px, py, 0)
         if (e.msg = 0x20A)
             Click (delta > 0 ? "WheelUp " : "WheelDown ") notches
         else
             Click (delta > 0 ? "WheelRight " : "WheelLeft ") notches
+    }
+}
+
+; Wait until a window matching title-part/exe exists (or is active), up to
+; e.ms — then it becomes the reference window for window-relative coords.
+ReplayWaitWindow(e) {
+    global g_playRef, g_playRefT
+    crit := LTrim(e.title (e.exe != "" ? " ahk_exe " e.exe : ""))
+    if (crit = "")
+        return
+    deadline := A_TickCount + e.ms
+    hwnd := 0
+    loop {
+        try hwnd := e.active ? WinActive(crit) : WinExist(crit)
+        if (hwnd || A_TickCount >= deadline)
+            break
+        Sleep 100
+        if (g_stopPlay || GetKeyState("Escape", "P"))
+            return
+    }
+    if hwnd {
+        g_playRef := hwnd
+        g_playRefT := 0
     }
 }
 
@@ -781,6 +875,7 @@ FindTargetWindow(e) {
 ; recorded process path and wait for its window. Already active or not
 ; startable: no-op, the rest of the macro plays on.
 ReplayWindowSwitch(e) {
+    global g_playRef, g_playRefT
     hwnd := FindTargetWindow(e)
     if (!hwnd && e.HasOwnProp("path") && e.path != "" && FileExist(e.path)) {
         try {
@@ -789,7 +884,11 @@ ReplayWindowSwitch(e) {
                 hwnd := WinExist()
         }
     }
-    if (!hwnd || WinActive(hwnd))
+    if !hwnd
+        return
+    g_playRef := hwnd   ; reference for window-relative coordinates
+    g_playRefT := 0
+    if WinActive(hwnd)
         return
     try {
         WinActivate(hwnd)
@@ -860,7 +959,8 @@ WriteMacroFile(path) {
             hasProps := true
     if hasProps
         out .= "p`t" g_curProps.Get("repeat", "") "`t" g_curProps.Get("pause", "")
-            . "`t" g_curProps.Get("speed", "") "`t" g_curProps.Get("mode", "") "`n"
+            . "`t" g_curProps.Get("speed", "") "`t" g_curProps.Get("mode", "")
+            . "`t" CleanField(g_curProps.Get("hotkey", "")) "`t" g_curProps.Get("coords", "") "`n"
     for e in g_events {
         if (e.kind = "k")
             out .= "k`t" e.t "`t" e.vk "`t" e.sc "`t" (e.up ? 1 : 0) "`n"
@@ -874,8 +974,11 @@ WriteMacroFile(path) {
             out .= "s`t" e.t "`t" CleanField(e.keys) "`n"
         else if (e.kind = "d")
             out .= "d`t" e.t "`t" e.ms "`n"
+        else if (e.kind = "ww")
+            out .= "ww`t" e.t "`t" e.exe "`t" e.title "`t" e.ms "`t" e.active "`n"
         else
-            out .= "m`t" e.t "`t" e.msg "`t" e.x "`t" e.y "`t" e.data "`n"
+            out .= "m`t" e.t "`t" e.msg "`t" e.x "`t" e.y "`t" e.data
+                . (e.HasOwnProp("wx") ? "`t" e.wx "`t" e.wy : "") "`n"
     }
     try FileDelete(path)
     try FileAppend(out, path, "UTF-8")
@@ -924,12 +1027,16 @@ LoadMacroFile(path) {
         loop parse FileRead(path, "UTF-8"), "`n", "`r" {
             f := StrSplit(A_LoopField, "`t")
             if (f.Length >= 5 && f[1] = "p") {
-                for i, k in ["repeat", "pause", "speed", "mode"]
-                    if (f[i + 1] != "")
+                for i, k in ["repeat", "pause", "speed", "mode", "hotkey", "coords"]
+                    if (f.Length >= i + 1 && f[i + 1] != "")
                         g_curProps[k] := f[i + 1]
             } else if (f.Length >= 5 && f[1] = "k")
                 g_events.Push({t: Integer(f[2]), kind: "k", vk: Integer(f[3])
                     , sc: Integer(f[4]), up: f[5] = "1"})
+            else if (f.Length >= 8 && f[1] = "m")
+                g_events.Push({t: Integer(f[2]), kind: "m", msg: Integer(f[3])
+                    , x: Integer(f[4]), y: Integer(f[5]), data: Integer(f[6])
+                    , wx: Integer(f[7]), wy: Integer(f[8])})
             else if (f.Length >= 6 && f[1] = "m")
                 g_events.Push({t: Integer(f[2]), kind: "m", msg: Integer(f[3])
                     , x: Integer(f[4]), y: Integer(f[5]), data: Integer(f[6])})
@@ -946,6 +1053,9 @@ LoadMacroFile(path) {
                 g_events.Push({t: Integer(f[2]), kind: "s", keys: f[3]})
             else if (f.Length >= 3 && f[1] = "d")
                 g_events.Push({t: Integer(f[2]), kind: "d", ms: Integer(f[3])})
+            else if (f.Length >= 6 && f[1] = "ww")
+                g_events.Push({t: Integer(f[2]), kind: "ww", exe: f[3], title: f[4]
+                    , ms: Integer(f[5]), active: f[6] = "1" ? 1 : 0})
         }
     }
 }
@@ -953,9 +1063,18 @@ LoadMacroFile(path) {
 ; ── Config ──────────────────────────────────────────────────────────────
 LoadConfig(reread := false) {
     global g_recordKey, g_playKey, g_mode, g_speed, g_fixedDelayMs
-    global g_maxWaitMs, g_pollMs, g_maxEvents, g_windowAnchors
+    global g_maxWaitMs, g_pollMs, g_maxEvents, g_windowAnchors, g_macroDir
+    global g_countdownMs, g_playOsd
     if !FileExist(g_configFile)
         WriteDefaultConfig()
+    dir := Trim(IniRead(g_configFile, "Settings", "MacroFolder", ""))
+    if (dir != "") {
+        if !RegExMatch(dir, "^([A-Za-z]:\\|\\\\)")   ; relative → beside the script
+            dir := A_ScriptDir "\" dir
+        g_macroDir := RTrim(dir, "\")
+    } else {
+        g_macroDir := A_ScriptDir "\macros"
+    }
     g_mode := IniRead(g_configFile, "Settings", "Mode", "original") = "fixed" ? "fixed" : "original"
     try g_speed := Number(IniRead(g_configFile, "Settings", "Speed", "1.0"))
     catch
@@ -985,6 +1104,12 @@ LoadConfig(reread := false) {
     try g_repeatPauseMs := Integer(IniRead(g_configFile, "Settings", "RepeatPauseMs", "1000"))
     catch
         g_repeatPauseMs := 1000
+    try g_countdownMs := Integer(IniRead(g_configFile, "Settings", "CountdownMs", "1000"))
+    catch
+        g_countdownMs := 1000
+    if (g_countdownMs < 0)
+        g_countdownMs := 0
+    g_playOsd := IniRead(g_configFile, "Settings", "PlaybackOsd", "1") != "0"
     ApplyHotkey(&g_recordKey, Trim(IniRead(g_configFile, "Settings", "RecordHotkey", "+F12")), ToggleRecord)
     ApplyHotkey(&g_playKey,   Trim(IniRead(g_configFile, "Settings", "PlayHotkey",   "F12")), Play)
     if reread
@@ -1027,8 +1152,14 @@ WriteDefaultConfig() {
 ; MaxWaitMs: longest single pause replayed in original mode.
 ; MousePollMs: mouse sampling interval while recording (position/buttons).
 ; MaxEvents: safety cap on the number of recorded events.
+; MacroFolder: where recordings are stored. Empty = the "macros" folder
+;   beside the script; a relative path is resolved against the script
+;   folder. Existing recordings are NOT moved when this changes.
 ; Repeat: how many times a playback runs (0 = until aborted).
 ; RepeatPauseMs: pause between the repetitions.
+; CountdownMs: pause before playback starts, with a countdown overlay
+;   (0 = start immediately).
+; PlaybackOsd=1: progress overlay during playback (step count, repetition).
 ; WindowAnchors=1: record "switch to program X" anchors at the start and at
 ;   every active-window change - playback re-activates that program (matched
 ;   by process name, with title-substring fallback) and waits until it is
@@ -1043,9 +1174,12 @@ FixedDelayMs=50
 MaxWaitMs=5000
 MousePollMs=15
 MaxEvents=100000
+MacroFolder=
 WindowAnchors=1
 Repeat=1
 RepeatPauseMs=1000
+CountdownMs=1000
+PlaybackOsd=1
 )"
     try FileAppend(defaults "`n", g_configFile, "UTF-16")
 }
@@ -1078,6 +1212,7 @@ InitTray() {
     recsMenu.Add("Save copy as…", SaveCopyAs)
     recsMenu.Add("Export as standalone script…", ExportStandalone)
     recsMenu.Add("Load macro file…", LoadMacroDialog)
+    recsMenu.Add("Change macro folder…", ChangeMacroFolder)
     recsMenu.Add("Open recordings folder", OpenMacroDir)
     repMenu := Menu()
     for n in [1, 2, 3, 5, 10, 25] {
@@ -1113,6 +1248,7 @@ InitTray() {
     A_IconTip := "Encore — " (g_recording ? "recording…"
         : g_playing ? "playing…"
         : cur != "" ? cur " (" g_events.Length " events)" : "no recordings")
+    SyncMacroHotkeys()
     PushState()
 }
 
@@ -1280,6 +1416,7 @@ UiMessage(sender, args) {
         case "saveMacroSettings": UiSaveMacroProps(msg)
         case "saveSettings": UiSaveSettings(msg)
         case "exportAhk": SetTimer((*) => ExportStandalone(), -1)   ; detached: opens a file dialog
+        case "browseMacroFolder": SetTimer(UiBrowseMacroFolder, -1)
         case "openFolder": OpenMacroDir()
     }
 }
@@ -1305,7 +1442,8 @@ PushState() {
         , "settings", Map("recordKey", g_recordKey, "playKey", g_playKey
             , "mode", g_mode, "speed", g_speed, "fixedDelayMs", g_fixedDelayMs
             , "repeat", g_repeat, "repeatPauseMs", g_repeatPauseMs
-            , "anchors", g_windowAnchors ? 1 : 0))
+            , "anchors", g_windowAnchors ? 1 : 0, "macroFolder", g_macroDir
+            , "countdownMs", g_countdownMs, "playbackOsd", g_playOsd ? 1 : 0))
     UiSend("window.receiveState(" JSON.Dump(st) ")")
 }
 
@@ -1330,11 +1468,78 @@ PushMacro() {
             arr.Push(Map("kind", "s", "t", e.t, "keys", e.keys))
         else if (e.kind = "d")
             arr.Push(Map("kind", "d", "t", e.t, "ms", e.ms))
+        else if (e.kind = "ww")
+            arr.Push(Map("kind", "ww", "t", e.t, "exe", e.exe, "title", e.title
+                , "ms", e.ms, "active", e.active))
         else
             arr.Push(Map("kind", "m", "t", e.t, "msg", e.msg, "x", e.x, "y", e.y, "data", e.data))
     }
     payload := Map("events", arr, "truncated", g_events.Length > cap ? 1 : 0)
     UiSend("window.receiveMacro(" JSON.Dump(payload) ")")
+}
+
+; Browse… in the settings dialog: pick a folder, send it back into the
+; open dialog's field (applied when the user presses Save).
+UiBrowseMacroFolder() {
+    global g_macroDir
+    dir := ""
+    try dir := DirSelect("*" g_macroDir, 3, "Choose the folder where recordings are stored")
+    if (dir != "")
+        UiSend("window.setMacroFolder(" JSON.Dump(dir) ")")
+}
+
+; ── Per-macro hotkeys ───────────────────────────────────────────────────
+; Each recording can carry its own global hotkey (field 5 of the p line):
+; pressing it plays THAT macro. The registry is rebuilt from the files on
+; every state change (InitTray), so renames/deletes/edits stay in sync.
+ReadMacroHotkey(path) {
+    line := ""
+    try line := FileRead(path, "UTF-8 m256")
+    if !line
+        return ""
+    line := StrSplit(line, "`n")[1]
+    f := StrSplit(RTrim(line, "`r"), "`t")
+    return (f.Length >= 6 && f[1] = "p") ? Trim(f[6]) : ""
+}
+
+SyncMacroHotkeys() {
+    global g_macroHotkeys
+    if g_cliMode
+        return
+    wanted := Map()
+    for m in ListMacros() {
+        hk := ReadMacroHotkey(m.p)
+        if (hk = "" || wanted.Has(hk))
+            continue
+        if (hk = g_recordKey || hk = g_playKey) {
+            Notify("Encore: macro hotkey " hk " collides with the main hotkeys")
+            continue
+        }
+        wanted[hk] := m.p
+    }
+    for hk, path in g_macroHotkeys.Clone() {
+        if (!wanted.Has(hk) || wanted[hk] != path) {
+            try Hotkey(hk, "Off")
+            g_macroHotkeys.Delete(hk)
+        }
+    }
+    for hk, path in wanted {
+        if !g_macroHotkeys.Has(hk) {
+            try {
+                Hotkey(hk, PlayMacroFile.Bind(path), "On")
+                g_macroHotkeys[hk] := path
+            } catch {
+                Notify("Encore: invalid macro hotkey: " hk)
+            }
+        }
+    }
+}
+
+PlayMacroFile(path, *) {
+    if (g_recording || g_playing || !FileExist(path))
+        return
+    SelectMacro(path)
+    SetTimer(Play, -1)
 }
 
 ; Light parse for the sidebar: event count and duration of a macro file.
@@ -1432,6 +1637,15 @@ BuildStepEvent(msg, t) {
     if (type = "switch" && (Trim(msg.Get("exe", "")) != "" || Trim(msg.Get("title", "")) != ""))
         return {t: t, kind: "w", exe: Trim(msg.Get("exe", ""))
             , title: Trim(msg.Get("title", "")), path: ""}
+    if (type = "waitwin" && (Trim(msg.Get("exe", "")) != "" || Trim(msg.Get("title", "")) != "")) {
+        tmo := 10000
+        try tmo := Integer(msg.Get("timeout", "10000"))
+        if (tmo < 100)
+            tmo := 10000
+        return {t: t, kind: "ww", exe: Trim(msg.Get("exe", ""))
+            , title: Trim(msg.Get("title", "")), ms: tmo
+            , active: msg.Get("active", "") = "1" ? 1 : 0}
+    }
     return 0
 }
 
@@ -1525,22 +1739,54 @@ UiSaveMacroProps(msg) {
     if (g_currentFile = "")
         return
     g_curProps := Map()
-    for k in ["repeat", "pause", "speed", "mode"]
+    for k in ["repeat", "pause", "speed", "mode", "hotkey", "coords"]
         if (msg.Has(k) && Trim(msg[k]) != "")
             g_curProps[k] := Trim(msg[k])
     WriteMacroFile(g_currentFile)
-    InitTray()
+    InitTray()   ; also re-syncs the per-macro hotkeys
 }
 
 UiSaveSettings(msg) {
-    global g_configFile
+    global g_configFile, g_macroDir
     static PAIRS := Map("recordKey", "RecordHotkey", "playKey", "PlayHotkey"
         , "mode", "Mode", "speed", "Speed", "fixedDelayMs", "FixedDelayMs"
-        , "repeat", "Repeat", "repeatPauseMs", "RepeatPauseMs", "anchors", "WindowAnchors")
+        , "repeat", "Repeat", "repeatPauseMs", "RepeatPauseMs", "anchors", "WindowAnchors"
+        , "macroFolder", "MacroFolder", "countdownMs", "CountdownMs", "playbackOsd", "PlaybackOsd")
+    prevDir := g_macroDir
     for k, ini in PAIRS
         if msg.Has(k)
             try IniWrite(msg[k], g_configFile, "Settings", ini)
     LoadConfig(true)
+    if (g_macroDir != prevDir)
+        SelectNewestMacro()
+}
+
+; After a folder change: point the selection at the newest recording in
+; the new folder (or clear it when the folder is empty).
+SelectNewestMacro() {
+    global g_currentFile, g_events, g_curProps
+    macros := ListMacros()
+    if macros.Length {
+        SelectMacro(macros[1].p)
+        return
+    }
+    g_currentFile := ""
+    g_events := []
+    g_curProps := Map()
+    InitTray()
+    PushMacro()
+}
+
+; Tray path for changing the folder — the UI has Browse… in Settings.
+ChangeMacroFolder(*) {
+    global g_configFile, g_macroDir
+    dir := ""
+    try dir := DirSelect("*" g_macroDir, 3, "Choose the folder where recordings are stored")
+    if (dir = "")
+        return
+    try IniWrite(dir, g_configFile, "Settings", "MacroFolder")
+    LoadConfig(true)
+    SelectNewestMacro()
 }
 
 ; Notices go to the top center of the screen, away from the mouse — a
@@ -1697,6 +1943,11 @@ Replay(e, held) {
             try Send e.keys
         case "d":
             Sleep e.ms
+        case "ww":
+            crit := LTrim(e.title (e.exe != "" ? " ahk_exe " e.exe : ""))
+            if (crit != "") {
+                try (e.active ? WinWaitActive(crit, , e.ms / 1000.0) : WinWait(crit, , e.ms / 1000.0))
+            }
         case "w":
             hwnd := 0
             try {

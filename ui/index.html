@@ -45,6 +45,13 @@
           <option value="fixed">fixed</option>
         </select>
       </label>
+      <label>Hotkey <input id="pHotkey" type="text" placeholder="e.g. ^!1" style="width:80px"></label>
+      <label>Coords
+        <select id="pCoords">
+          <option value="">screen</option>
+          <option value="window">window-relative</option>
+        </select>
+      </label>
       <button id="btnSaveProps">Save</button>
       <span class="hint">empty = use the global settings</span>
     </div>
@@ -65,13 +72,18 @@
         <option value="pause">Pause</option>
         <option value="send">Send keys (AHK syntax)</option>
         <option value="switch">Switch to program</option>
+        <option value="waitwin">Wait for window</option>
       </select>
     </div>
     <div class="row st-field" data-for="text"><label>Text</label><input id="stText" type="text" style="width:240px"></div>
     <div class="row st-field" data-for="pause"><label>Milliseconds</label><input id="stMs" type="text"></div>
     <div class="row st-field" data-for="send"><label>Keys (e.g. ^s or {Enter})</label><input id="stKeys" type="text" style="width:180px"></div>
-    <div class="row st-field" data-for="switch"><label>Program (exe)</label><input id="stExe" type="text" style="width:180px"></div>
-    <div class="row st-field" data-for="switch"><label>Title contains (optional)</label><input id="stTitle" type="text" style="width:180px"></div>
+    <div class="row st-field" data-for="switch waitwin"><label>Program (exe)</label><input id="stExe" type="text" style="width:180px"></div>
+    <div class="row st-field" data-for="switch waitwin"><label>Title contains (optional)</label><input id="stTitle" type="text" style="width:180px"></div>
+    <div class="row st-field" data-for="waitwin"><label>Timeout ms</label><input id="stTimeout" type="text"></div>
+    <div class="row st-field" data-for="waitwin"><label>Wait until</label>
+      <select id="stActive"><option value="0">the window exists</option><option value="1">the window is active</option></select>
+    </div>
     <div class="btns">
       <button id="btnStepCancel">Cancel</button>
       <button id="btnStepSave" class="primary">Save</button>
@@ -93,6 +105,16 @@
     <div class="row"><label>Pause between repeats ms</label><input id="sRepeatPause" type="text"></div>
     <div class="row"><label>Window anchors</label>
       <select id="sAnchors"><option value="1">on</option><option value="0">off</option></select>
+    </div>
+    <div class="row"><label>Countdown before playback ms (0 = off)</label><input id="sCountdown" type="text"></div>
+    <div class="row"><label>Playback overlay (progress)</label>
+      <select id="sOsd"><option value="1">on</option><option value="0">off</option></select>
+    </div>
+    <div class="row"><label>Macro folder</label>
+      <span>
+        <input id="sMacroFolder" type="text" style="width:220px" placeholder="macros (beside the script)">
+        <button id="sBrowse">Browse…</button>
+      </span>
     </div>
     <div class="btns">
       <button id="btnSettingsCancel">Cancel</button>
