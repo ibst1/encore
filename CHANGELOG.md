@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0 (2026-08-24)
+
+- Editable delays: the step list shows the pause before each step —
+  click it and type a new value in milliseconds.
+- Rename recordings by double-clicking or right-clicking them in the list.
+- Command line: `Encore.exe <macro>` plays a macro and exits (coexists
+  with the tray instance); `--export <macro> <dest>` exports it.
+- Export as standalone .ahk (window button, tray menu or CLI): the events
+  plus a minimal embedded player, runnable anywhere with AutoHotkey v2
+  and no Encore.
+- Fix: an unmatched key-up in a hand-edited macro could abort playback.
+
 ## 1.3.0 (2026-08-24)
 
 - Step editing: "Type …" steps can be edited (the raw keystrokes are

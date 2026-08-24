@@ -214,6 +214,12 @@ function fmtDur(ms) {
   return Math.floor(ms / 60000) + ':' + String(Math.round(ms % 60000 / 1000)).padStart(2, '0') + ' min';
 }
 
+function renamePrompt(name) {
+  const nn = prompt('Name for the recording:', name);
+  if (nn && nn.trim() && nn.trim() !== name)
+    post({ action: 'rename', name, newName: nn.trim() });
+}
+
 function renderList() {
   const ul = document.getElementById('recList');
   ul.innerHTML = '';
@@ -230,7 +236,13 @@ function renderList() {
     li.innerHTML = '<span class="nm"></span><span class="meta"></span>';
     li.querySelector('.nm').textContent = r.name;
     li.querySelector('.meta').textContent = r.events + ' · ' + fmtDur(r.durMs);
+    li.title = 'Double-click or right-click to rename';
     li.addEventListener('click', () => post({ action: 'select', name: r.name }));
+    li.addEventListener('dblclick', () => renamePrompt(r.name));
+    li.addEventListener('contextmenu', ev => {
+      ev.preventDefault();
+      renamePrompt(r.name);
+    });
     ul.appendChild(li);
   }
 }
@@ -246,9 +258,44 @@ function renderSteps() {
   document.getElementById('truncNote').hidden = !truncated;
   const t0 = events.length ? events[0].t : 0;
   steps.forEach((s, idx) => {
+    // the pause before this step = gap between the previous step's last
+    // event and this step's first event; click the cell to change it
+    const gap = idx === 0 ? 0 : s.t - events[steps[idx - 1].to - 1].t;
     const tr = document.createElement('tr');
     tr.innerHTML = '<td class="n">' + (idx + 1) + '</td><td class="ic">' + s.icon
-      + '</td><td class="lb">' + s.html + '</td><td class="tm">+' + fmtDur(s.t - t0) + '</td>';
+      + '</td><td class="lb">' + s.html + '</td><td class="tm"></td>';
+    const tm = tr.querySelector('.tm');
+    if (idx === 0) {
+      tm.textContent = 'start';
+    } else {
+      const span = document.createElement('span');
+      span.className = 'gap';
+      span.textContent = '+' + fmtDur(gap);
+      span.title = 'Total +' + fmtDur(s.t - t0) + ' — click to change the pause before this step';
+      span.addEventListener('click', ev => {
+        ev.stopPropagation();
+        if (truncated) return;
+        const inp = document.createElement('input');
+        inp.className = 'gapEdit';
+        inp.value = gap;
+        const commit = () => {
+          const ms = parseInt(inp.value, 10);
+          if (!isNaN(ms) && ms >= 0 && ms !== gap)
+            post({ action: 'setDelay', at: s.from, ms });
+          else
+            renderSteps();
+        };
+        inp.addEventListener('keydown', ke => {
+          if (ke.key === 'Enter') inp.blur();
+          if (ke.key === 'Escape') { inp.removeEventListener('blur', commit); renderSteps(); }
+        });
+        inp.addEventListener('blur', commit);
+        tm.replaceChildren(inp);
+        inp.focus();
+        inp.select();
+      });
+      tm.replaceChildren(span);
+    }
     tr.addEventListener('click', ev => {
       if (!ev.ctrlKey && !ev.shiftKey) selSteps.clear();
       if (selSteps.has(idx)) selSteps.delete(idx); else selSteps.add(idx);
@@ -332,10 +379,10 @@ window.addEventListener('DOMContentLoaded', () => {
   $('btnStop').addEventListener('click', () => post({ action: 'stop' }));
   $('btnFolder').addEventListener('click', () => post({ action: 'openFolder' }));
   $('btnRename').addEventListener('click', () => {
-    if (!state || !state.current) return;
-    const name = prompt('Name for the recording:', state.current);
-    if (name && name.trim() && name !== state.current)
-      post({ action: 'rename', name: state.current, newName: name.trim() });
+    if (state && state.current) renamePrompt(state.current);
+  });
+  $('btnExportAhk').addEventListener('click', () => {
+    if (state && state.current) post({ action: 'exportAhk' });
   });
   $('btnDelete').addEventListener('click', () => {
     if (!state || !state.current) return;

@@ -1,4 +1,4 @@
-﻿; Encore — v1.3.0 (2026-08-24)
+﻿; Encore — v1.4.0 (2026-08-24)
 ;
 ; Records keyboard and mouse activity (keys, clicks, movements, wheel) and
 ; plays it back — at the original speed (adjustable factor) or with a fixed
@@ -21,7 +21,7 @@
 ; Config: "Encore config.ini" next to the script (created on first
 ; start, UTF-16 — the Windows ini API requires it for non-ASCII text).
 #Requires AutoHotkey v2.0
-#SingleInstance Force
+#SingleInstance Off   ; instance handling is manual — see the CLI section below
 CoordMode "Mouse", "Screen"
 CoordMode "ToolTip", "Screen"
 
@@ -63,9 +63,26 @@ global g_windowAnchors := true
 global g_repeat        := 1    ; playback repetitions, 0 = until aborted
 global g_repeatPauseMs := 1000
 
+; Command line:
+;   Encore.ahk <macro>                    play that macro and exit
+;   Encore.ahk --export <macro> <dest>    export it as a standalone .ahk
+; <macro> is a path, or a name (with or without .macro) in macros\.
+; A CLI run coexists with the tray instance; a plain (tray) start replaces
+; any previous tray instance, like #SingleInstance Force used to.
+global g_cliMode := A_Args.Length > 0
+
 OnError(LogError)
 OnExit(Cleanup)
+if !g_cliMode {
+    DetectHiddenWindows true
+    for hwnd in WinGetList(A_ScriptFullPath " ahk_class AutoHotkey")
+        if (hwnd != A_ScriptHwnd)
+            PostMessage(0x111, 65307, 0, , hwnd)   ; ask the old instance to exit
+    DetectHiddenWindows false
+}
 LoadConfig()
+if g_cliMode
+    CliMain()   ; plays or exports, then exits
 macros := ListMacros()
 if macros.Length {
     g_currentFile := macros[1].p
@@ -90,6 +107,48 @@ IpcCmd(wParam, lParam, msg, hwnd) {
         case 4: SetTimer(() => LoadConfig(true), -1)
         case 5: SetTimer(OpenUi, -1)
     }
+}
+
+; ── Command-line mode ───────────────────────────────────────────────────
+CliMain() {
+    global g_events, g_currentFile
+    A_IconHidden := true
+    if (A_Args[1] = "--export") {
+        if (A_Args.Length < 3)
+            ExitApp 1
+        file := CliResolve(A_Args[2])
+        if (file = "")
+            ExitApp 1
+        LoadMacroFile(file)
+        g_currentFile := file
+        dest := A_Args[3]
+        if !RegExMatch(dest, "i)\.ahk$")
+            dest .= ".ahk"
+        ExitApp(ExportTo(dest) ? 0 : 1)
+    }
+    file := CliResolve(A_Args[1])
+    if (file = "") {
+        Notify("Encore: macro not found: " A_Args[1], 2500)
+        Sleep 2500
+        ExitApp 1
+    }
+    LoadMacroFile(file)
+    g_currentFile := file
+    if !g_events.Length
+        ExitApp 1
+    Play()
+    ExitApp 0
+}
+
+; A path as given, or a name (with or without .macro) in macros\.
+CliResolve(arg) {
+    if FileExist(arg)
+        return arg
+    if FileExist(g_macroDir "\" arg)
+        return g_macroDir "\" arg
+    if FileExist(g_macroDir "\" arg ".macro")
+        return g_macroDir "\" arg ".macro"
+    return ""
 }
 
 ; ── Recording ───────────────────────────────────────────────────────────
@@ -605,10 +664,12 @@ Play(*) {
                 if (e.kind = "k") {
                     key := Format("vk{:X}sc{:03X}", e.vk, e.sc)
                     Send "{" key (e.up ? " up" : " down") "}"
-                    if e.up
-                        downKeys.Delete(e.vk)
-                    else
+                    if e.up {
+                        if downKeys.Has(e.vk)   ; Map.Delete throws on a missing key
+                            downKeys.Delete(e.vk)
+                    } else {
                         downKeys[e.vk] := e.sc
+                    }
                 } else if (e.kind = "w") {
                     ReplayWindowSwitch(e)
                 } else if (e.kind = "g") {
@@ -931,6 +992,10 @@ LoadConfig(reread := false) {
 }
 
 ApplyHotkey(&stored, newKey, fn) {
+    if g_cliMode {   ; a CLI run must not fight the tray instance's hotkeys
+        stored := ""
+        return
+    }
     if (stored != "" && stored != newKey)
         try Hotkey(stored, "Off")
     if (newKey != "") {
@@ -1011,6 +1076,7 @@ InitTray() {
     recsMenu.Add()
     recsMenu.Add("Name recording…", NameRecording)
     recsMenu.Add("Save copy as…", SaveCopyAs)
+    recsMenu.Add("Export as standalone script…", ExportStandalone)
     recsMenu.Add("Load macro file…", LoadMacroDialog)
     recsMenu.Add("Open recordings folder", OpenMacroDir)
     repMenu := Menu()
@@ -1210,8 +1276,10 @@ UiMessage(sender, args) {
         case "deleteEvents": UiDeleteEvents(msg["ranges"])
         case "setStep": UiSetStep(msg)
         case "insertStep": UiInsertStep(msg)
+        case "setDelay": UiSetDelay(msg)
         case "saveMacroSettings": UiSaveMacroProps(msg)
         case "saveSettings": UiSaveSettings(msg)
+        case "exportAhk": SetTimer((*) => ExportStandalone(), -1)   ; detached: opens a file dialog
         case "openFolder": OpenMacroDir()
     }
 }
@@ -1424,6 +1492,34 @@ UiInsertStep(msg) {
     PushMacro()
 }
 
+; Change the pause before the step whose first event is `at` (1-based):
+; every timestamp from that event on is shifted by the difference, so the
+; step's internal timing is preserved. (Replay of a single pause is still
+; capped by MaxWaitMs in original mode.)
+UiSetDelay(msg) {
+    global g_events, g_currentFile
+    if (g_currentFile = "" || g_recording || g_playing)
+        return
+    at := 0, ms := -1
+    try {
+        at := Integer(msg.Get("at", 0))
+        ms := Integer(msg.Get("ms", -1))
+    }
+    if (at < 2 || at > g_events.Length || ms < 0)
+        return
+    delta := ms - (g_events[at].t - g_events[at - 1].t)
+    if (delta = 0)
+        return
+    idx := at
+    while (idx <= g_events.Length) {
+        g_events[idx].t := g_events[idx].t + delta
+        idx += 1
+    }
+    WriteMacroFile(g_currentFile)
+    InitTray()
+    PushMacro()
+}
+
 UiSaveMacroProps(msg) {
     global g_curProps, g_currentFile
     if (g_currentFile = "")
@@ -1449,6 +1545,242 @@ UiSaveSettings(msg) {
 
 ; Notices go to the top center of the screen, away from the mouse — a
 ; tooltip at the pointer swallows the click the user aims right after it.
+; ── Standalone export ───────────────────────────────────────────────────
+; Generates a self-contained .ahk: the events as data plus a minimal
+; player. Repeat/pause/speed/mode are baked in at export time (the
+; recording's own overrides, falling back to the globals).
+ExportStandalone(*) {
+    global g_currentFile, g_events
+    if (g_currentFile = "" || !g_events.Length) {
+        Notify("Encore: no recording selected")
+        return
+    }
+    base := SubStr(g_currentFile, InStr(g_currentFile, "\", , -1) + 1)
+    base := SubStr(base, 1, -6)
+    dest := ""
+    try dest := FileSelect("S", g_macroDir "\" base ".ahk"
+        , "Export as a standalone script", "AutoHotkey (*.ahk)")
+    if (dest = "")
+        return
+    if !RegExMatch(dest, "i)\.ahk$")
+        dest .= ".ahk"
+    if ExportTo(dest)
+        Notify("Exported: " dest, 2000)
+    else
+        Notify("Encore: could not export")
+}
+
+ExportTo(dest) {
+    try {
+        try FileDelete(dest)
+        FileAppend(BuildStandalone(), dest, "UTF-8")
+        return true
+    } catch {
+        return false
+    }
+}
+
+; Escape a value for a double-quoted string in generated v2 source.
+_QEsc(s) {
+    s := StrReplace(s, Chr(96), Chr(96) Chr(96))
+    s := StrReplace(s, '"', Chr(96) '"')
+    s := StrReplace(s, "`r", "")
+    s := StrReplace(s, "`n", Chr(96) "n")
+    return s
+}
+
+BuildStandalone() {
+    global g_events
+    name := SubStr(g_currentFile, InStr(g_currentFile, "\", , -1) + 1)
+    t0 := g_events[1].t
+    ev := ""
+    for e in g_events {
+        rt := e.t - t0
+        if (e.kind = "k")
+            ev .= '    {k:"k", t:' rt ', vk:' e.vk ', sc:' e.sc ', up:' (e.up ? 1 : 0) '},`n'
+        else if (e.kind = "m")
+            ev .= '    {k:"m", t:' rt ', msg:' e.msg ', x:' e.x ', y:' e.y ', data:' e.data '},`n'
+        else if (e.kind = "w")
+            ev .= '    {k:"w", t:' rt ', exe:"' _QEsc(e.exe) '", title:"' _QEsc(e.title)
+                . '", path:"' _QEsc(e.HasOwnProp("path") ? e.path : "") '"},`n'
+        else if (e.kind = "g")
+            ev .= '    {k:"g", t:' rt ', exe:"' _QEsc(e.exe) '", title:"' _QEsc(e.title)
+                . '", x:' e.x ', y:' e.y ', w:' e.w ', h:' e.h ', state:' e.state '},`n'
+        else if (e.kind = "t")
+            ev .= '    {k:"t", t:' rt ', text:"' _QEsc(e.text) '"},`n'
+        else if (e.kind = "s")
+            ev .= '    {k:"s", t:' rt ', keys:"' _QEsc(e.keys) '"},`n'
+        else if (e.kind = "d")
+            ev .= '    {k:"d", t:' rt ', ms:' e.ms '},`n'
+    }
+    tpl := "
+(LTrim0
+; %NAME% - exported from Encore %DATE%. Run to play back; Esc aborts.
+#Requires AutoHotkey v2.0
+#SingleInstance Off
+CoordMode "Mouse", "Screen"
+SendLevel 1
+
+reps := %REPS%          ; 0 = until aborted
+repPause := %RPAUSE%
+speed := %SPEED%
+mode := "%MODE%"
+fixedDelay := %FIXED%
+maxWait := %MAXWAIT%
+
+ev := [
+%EVENTS%]
+
+if (mode = "fixed") {
+    kept := []
+    pending := 0
+    for e in ev {
+        if (e.k = "m" && e.msg = 0x200) {
+            pending := e
+        } else {
+            if pending {
+                kept.Push(pending)
+                pending := 0
+            }
+            kept.Push(e)
+        }
+    }
+    ev := kept
+}
+
+down := Map()
+rep := 0
+loop {
+    rep += 1
+    prevT := ev.Length ? ev[1].t : 0
+    stop := false
+    for e in ev {
+        if GetKeyState("Escape", "P") {
+            stop := true
+            break
+        }
+        if (mode = "fixed") {
+            Sleep fixedDelay
+        } else {
+            w := Round((e.t - prevT) / speed)
+            if (w > 0)
+                Sleep Min(w, maxWait)
+            prevT := e.t
+        }
+        Replay(e, down)
+    }
+    if (stop || (reps != 0 && rep >= reps))
+        break
+    Sleep repPause
+}
+for vk, sc in down
+    try Send "{" Format("vk{:X}sc{:03X}", vk, sc) " up}"
+ExitApp
+
+Replay(e, held) {
+    static BD := Map(0x201, "Left", 0x204, "Right", 0x207, "Middle")
+    static BU := Map(0x202, "Left", 0x205, "Right", 0x208, "Middle")
+    static BDBL := Map(0x203, "Left", 0x206, "Right", 0x209, "Middle")
+    switch e.k {
+        case "k":
+            key := Format("vk{:X}sc{:03X}", e.vk, e.sc)
+            Send "{" key (e.up ? " up" : " down") "}"
+            if e.up {
+                if held.Has(e.vk)
+                    held.Delete(e.vk)
+            } else {
+                held[e.vk] := e.sc
+            }
+        case "t":
+            SendText e.text
+        case "s":
+            try Send e.keys
+        case "d":
+            Sleep e.ms
+        case "w":
+            hwnd := 0
+            try {
+                if (e.title != "" && e.exe != "" && WinExist(e.title " ahk_exe " e.exe))
+                    hwnd := WinExist()
+                else if (e.exe != "" && WinExist("ahk_exe " e.exe))
+                    hwnd := WinExist()
+                else if (e.title != "" && WinExist(e.title))
+                    hwnd := WinExist()
+            }
+            if (!hwnd && e.path != "" && FileExist(e.path)) {
+                try {
+                    Run(e.path)
+                    if (e.exe != "" && WinWait("ahk_exe " e.exe, , 10))
+                        hwnd := WinExist()
+                }
+            }
+            if (hwnd && !WinActive(hwnd)) {
+                try {
+                    WinActivate(hwnd)
+                    WinWaitActive(hwnd, , 2)
+                }
+            }
+        case "g":
+            hwnd := 0
+            try {
+                if (e.title != "" && e.exe != "" && WinExist(e.title " ahk_exe " e.exe))
+                    hwnd := WinExist()
+                else if (e.exe != "" && WinExist("ahk_exe " e.exe))
+                    hwnd := WinExist()
+            }
+            if !hwnd
+                return
+            try {
+                if (e.state = -1) {
+                    WinMinimize(hwnd)
+                } else if (e.state = 1) {
+                    WinMaximize(hwnd)
+                } else {
+                    if (WinGetMinMax(hwnd) != 0)
+                        WinRestore(hwnd)
+                    WinMove(e.x, e.y, e.w, e.h, hwnd)
+                }
+            }
+        case "m":
+            if (e.msg = 0x200) {
+                MouseMove(e.x, e.y, 0)
+            } else if BDBL.Has(e.msg) {
+                MouseMove(e.x, e.y, 0)
+                Click BDBL[e.msg] " 2"
+            } else if BD.Has(e.msg) {
+                MouseMove(e.x, e.y, 0)
+                Click BD[e.msg] " Down"
+            } else if BU.Has(e.msg) {
+                MouseMove(e.x, e.y, 0)
+                Click BU[e.msg] " Up"
+            } else if (e.msg = 0x20A || e.msg = 0x20E) {
+                delta := (e.data >> 16) & 0xFFFF
+                if (delta > 0x7FFF)
+                    delta -= 0x10000
+                notches := Abs(delta) // 120
+                if (notches < 1)
+                    notches := 1
+                MouseMove(e.x, e.y, 0)
+                if (e.msg = 0x20A)
+                    Click (delta > 0 ? "WheelUp " : "WheelDown ") notches
+                else
+                    Click (delta > 0 ? "WheelRight " : "WheelLeft ") notches
+            }
+    }
+}
+)"
+    tpl := StrReplace(tpl, "%NAME%", name)
+    tpl := StrReplace(tpl, "%DATE%", FormatTime(, "yyyy-MM-dd"))
+    tpl := StrReplace(tpl, "%REPS%", EffInt("repeat", g_repeat))
+    tpl := StrReplace(tpl, "%RPAUSE%", EffInt("pause", g_repeatPauseMs))
+    tpl := StrReplace(tpl, "%SPEED%", EffNum("speed", g_speed))
+    tpl := StrReplace(tpl, "%MODE%", g_curProps.Get("mode", "") != "" ? g_curProps["mode"] : g_mode)
+    tpl := StrReplace(tpl, "%FIXED%", g_fixedDelayMs)
+    tpl := StrReplace(tpl, "%MAXWAIT%", g_maxWaitMs)
+    tpl := StrReplace(tpl, "%EVENTS%", ev)
+    return tpl
+}
+
 Notify(msg, ms := 3000) {
     ToolTip(msg, A_ScreenWidth // 2 - 120, 8)
     SetTimer(() => ToolTip(), -ms)

@@ -142,6 +142,18 @@ button.primary:hover { background: var(--accent2); }
   font-size: 12px;
 }
 #steps .tm { color: var(--text-dim); width: 90px; text-align: right; font-size: 11px; }
+#steps .tm .gap { cursor: pointer; border-bottom: 1px dotted transparent; }
+#steps .tm .gap:hover { color: var(--text); border-bottom-color: var(--text-dim); }
+#steps .tm .gapEdit {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--accent2);
+  border-radius: 3px;
+  padding: 1px 4px;
+  width: 64px;
+  text-align: right;
+}
 #stepsEmpty { padding: 30px; color: var(--text-dim); text-align: center; }
 .truncNote { padding: 8px 12px; color: var(--text-dim); font-style: italic; }
 
