@@ -13,6 +13,10 @@ A Windows macro recorder in the system tray: record what you do — keystrokes, 
 - **Window anchors**: at the start of a recording and at every window switch, Encore records *which program* was active. During playback it re-activates that program (matched by process name, with title-substring fallback) and waits until it is active — so switching to Excel mid-recording reliably switches to Excel mid-playback, even if a replayed Alt+Tab would have landed elsewhere.
 - The tray icon shows the state: blue square = idle, red dot = recording, green triangle = playing.
 - **Management window** (double-click the tray icon, or tray → *Open Encore*): browse the recordings with event counts and durations, read the selected macro as human-readable steps ("Switch to EXCEL.EXE", "Type hello", "Ctrl+C", "Double-click at (512, 300)", "Maximize"), select steps and delete them, rename/delete recordings, set per-recording playback overrides (repeat, pause, speed, mode — empty = global) and edit all global settings without touching the ini file. Requires the Microsoft Edge WebView2 Runtime (preinstalled on Windows 10/11 with Edge).
+- **Per-recording hotkeys**: give a recording its own global hotkey (the *Hotkey* field in the window, AutoHotkey syntax like `^!1`) — pressing it selects and plays that macro from anywhere.
+- **Window-relative playback**: set *Coords: window-relative* on a recording and its mouse actions replay relative to the anchored window's current position — the macro works even when the window has moved.
+- **Progress overlay and countdown**: playback shows a small "▶ name — 123/456 · rep 1/3 — Esc aborts" overlay, and starts after a configurable countdown (default 1 s) so you can settle focus. Both in Settings.
+- **Wait-for-window steps**: add a step that waits (with timeout) until a window with a given title/program exists or is active — robust macros against slow applications.
 - **Editable delays**: the time column shows the pause before each step — click it, type a new value in milliseconds and press Enter. All later timestamps shift along, so the step's internal timing is untouched. (Hover shows the cumulative time.)
 - **Edit and add steps**: a "Type …" step can be edited — its raw keystrokes are replaced by a text event played back with SendText, so you can change what a macro types without re-recording. New steps can be inserted anywhere: typed text, an explicit pause, raw keys in AutoHotkey Send syntax (e.g. `^s` or `{Enter}`), or a program switch. These appear in the macro file as `t`/`d`/`s`/`w` lines and can be hand-edited too.
 
@@ -44,6 +48,7 @@ A Windows macro recorder in the system tray: record what you do — keystrokes, 
 | `MaxWaitMs` | `5000` | Longest single pause replayed in original mode |
 | `MousePollMs` | `15` | Mouse sampling interval while recording |
 | `MaxEvents` | `100000` | Safety cap on the number of recorded events |
+| `MacroFolder` | *(empty)* | Where recordings are stored. Empty = `macros\` beside the script; relative paths resolve against the script folder. Change it via Settings (with a Browse button) or tray → Recordings → *Change macro folder…* — existing recordings are not moved |
 | `WindowAnchors` | `1` | Record and replay "switch to program X" anchors |
 | `Repeat` | `1` | Playback repetitions; `0` = until aborted |
 | `RepeatPauseMs` | `1000` | Pause between repetitions |
