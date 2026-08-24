@@ -72,14 +72,30 @@ function groupEvents() {
   steps = [];
   const n = events.length;
   let i = 0;
-  const push = (icon, html, from, to) =>
-    steps.push({ icon, html, from: from + 1, to: to + 1, t: events[from].t });
+  const push = (icon, html, from, to) => {
+    const s = { icon, html, from: from + 1, to: to + 1, t: events[from].t };
+    steps.push(s);
+    return s;
+  };
 
   while (i < n) {
     const e = events[i];
     if (e.kind === 'w') {
       push('⇆', 'Switch to <b>' + esc(e.exe || e.title) + '</b>'
-        + (e.title ? ' <span class="txt">' + esc(e.title) + '</span>' : ''), i, i);
+        + (e.title ? ' <span class="txt">' + esc(e.title) + '</span>' : ''), i, i)
+        .edit = { type: 'switch', exe: e.exe, title: e.title };
+      i++;
+    } else if (e.kind === 't') {
+      push('⌨', 'Type <span class="txt">' + esc(e.text) + '</span>', i, i)
+        .edit = { type: 'text', text: e.text };
+      i++;
+    } else if (e.kind === 's') {
+      push('⌨', 'Send keys <span class="kbd">' + esc(e.keys) + '</span>', i, i)
+        .edit = { type: 'send', keys: e.keys };
+      i++;
+    } else if (e.kind === 'd') {
+      push('⏱', 'Wait ' + e.ms + ' ms', i, i)
+        .edit = { type: 'pause', ms: e.ms };
       i++;
     } else if (e.kind === 'g') {
       let what = e.state === 1 ? 'Maximize' : e.state === -1 ? 'Minimize'
@@ -151,7 +167,8 @@ function groupEvents() {
         if (shiftOnlyText && keys.length) {
           // Shift held for capitals — render as typed text instead of a chord
           const txt = keys.map(vk => charFor(vk, true)).join('');
-          push('⌨', 'Type <span class="txt">' + esc(txt) + '</span>', i, to);
+          push('⌨', 'Type <span class="txt">' + esc(txt) + '</span>', i, to)
+            .edit = { type: 'text', text: txt };
         } else if (keys.length) {
           const combo = [...mods].join('+') + '+' + keys.map(keyName).join(', ');
           push('⌨', '<span class="kbd">' + esc(combo) + '</span>', i, to);
@@ -170,7 +187,8 @@ function groupEvents() {
           if (!x.up) txt += charFor(x.vk, false);
           j++;
         }
-        push('⌨', 'Type <span class="txt">' + esc(txt) + '</span>', i, j - 1);
+        push('⌨', 'Type <span class="txt">' + esc(txt) + '</span>', i, j - 1)
+          .edit = { type: 'text', text: txt };
         i = j;
       } else if (!e.up) {
         // special key: consume its up if it comes next
@@ -243,6 +261,34 @@ function renderSteps() {
 
 function updateDelBtn() {
   document.getElementById('btnDelSteps').disabled = !selSteps.size || truncated;
+  const one = selSteps.size === 1 ? steps[[...selSteps][0]] : null;
+  document.getElementById('btnEditStep').disabled = truncated || !(one && one.edit);
+}
+
+// ── step modal (add / edit) ────────────────────────────────────────────
+let stepMode = null;   // {mode:'add', at} | {mode:'edit', from, to}
+
+function showStepModal(mode, preset) {
+  stepMode = mode;
+  const $ = id => document.getElementById(id);
+  $('stepModalTitle').textContent = mode.mode === 'edit' ? 'Edit step' : 'Add step';
+  const p = preset || { type: 'text' };
+  $('stType').value = p.type;
+  $('stType').disabled = mode.mode === 'edit';
+  $('stText').value = p.text || '';
+  $('stMs').value = p.ms != null ? p.ms : '';
+  $('stKeys').value = p.keys || '';
+  $('stExe').value = p.exe || '';
+  $('stTitle').value = p.title || '';
+  applyStepType();
+  $('stepModal').hidden = false;
+}
+
+function applyStepType() {
+  const type = document.getElementById('stType').value;
+  document.querySelectorAll('.st-field').forEach(el => {
+    el.style.display = el.dataset.for === type ? '' : 'none';
+  });
 }
 
 function renderState() {
@@ -300,6 +346,30 @@ window.addEventListener('DOMContentLoaded', () => {
     if (!selSteps.size) return;
     const ranges = [...selSteps].sort((a, b) => a - b).map(i => [steps[i].from, steps[i].to]);
     post({ action: 'deleteEvents', ranges });
+  });
+  $('btnAddStep').addEventListener('click', () => {
+    if (!state || !state.current) return;
+    const sel = [...selSteps].sort((a, b) => a - b);
+    const at = sel.length ? steps[sel[sel.length - 1]].to + 1 : events.length + 1;
+    showStepModal({ mode: 'add', at });
+  });
+  $('btnEditStep').addEventListener('click', () => {
+    if (selSteps.size !== 1) return;
+    const s = steps[[...selSteps][0]];
+    if (!s.edit) return;
+    showStepModal({ mode: 'edit', from: s.from, to: s.to }, s.edit);
+  });
+  $('stType').addEventListener('change', applyStepType);
+  $('btnStepCancel').addEventListener('click', () => { $('stepModal').hidden = true; });
+  $('btnStepSave').addEventListener('click', () => {
+    const spec = { type: $('stType').value, text: $('stText').value,
+      ms: $('stMs').value.trim(), keys: $('stKeys').value,
+      exe: $('stExe').value.trim(), title: $('stTitle').value.trim() };
+    if (stepMode.mode === 'edit')
+      post({ action: 'setStep', from: stepMode.from, to: stepMode.to, ...spec });
+    else
+      post({ action: 'insertStep', at: stepMode.at, ...spec });
+    $('stepModal').hidden = true;
   });
   $('btnSaveProps').addEventListener('click', () => {
     post({ action: 'saveMacroSettings',

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0 (2026-08-24)
+
+- Step editing: "Type …" steps can be edited (the raw keystrokes are
+  replaced by a text event played with SendText), and pause, send-keys
+  and program-switch steps can be edited too.
+- Add steps anywhere in a macro: typed text, an explicit pause, raw keys
+  in AutoHotkey Send syntax, or a program switch. Stored as readable
+  t/d/s/w lines in the macro file.
+
 ## 1.2.0 (2026-08-24)
 
 - Management window (WebView2): browse recordings with event counts and
