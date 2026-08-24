@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0 (2026-08-24)
+
+- The play key (F12) also stops an ongoing recording.
+- Name recordings, export a copy and load macro files from the tray menu.
+- Smart replay: Alt+Tab sequences and taskbar switch clicks are replaced
+  by their window anchors (the switcher never opens — playback jumps
+  straight to the right window); anchors record the process path and
+  start the program when it is not running; rapid clicks are fused into
+  atomic double-clicks; moved/resized/maximized/minimized windows get
+  corrective geometry anchors. Shell surfaces (the switcher, Task View,
+  the taskbar, Start) can no longer become anchors.
+
 ## 1.0.0 (2026-08-24)
 
 - Initial release: records keyboard, mouse (movements, clicks, wheel) and

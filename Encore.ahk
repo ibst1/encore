@@ -1,4 +1,4 @@
-﻿; Encore — v1.0.0 (2026-08-24)
+﻿; Encore — v1.1.0 (2026-08-24)
 ;
 ; Records keyboard and mouse activity (keys, clicks, movements, wheel) and
 ; plays it back — at the original speed (adjustable factor) or with a fixed
@@ -6,8 +6,9 @@
 ;   - RecordHotkey (default Shift+F12) starts recording; the same key
 ;     stops it.
 ;   - PlayHotkey (default F12) plays the selected recording; pressing
-;     it again — or Esc — aborts playback. Repeat count and the pause
-;     between repetitions are configurable (tray menu / config).
+;     it again — or Esc — aborts playback, and during recording it stops
+;     the recording. Repeat count and the pause between repetitions are
+;     configurable (tray menu / config).
 ;   - Every recording is saved as a timestamped file in macros\ beside the
 ;     script; pick which one to play in the tray menu (Recordings).
 ;
@@ -36,6 +37,10 @@ global g_lastX      := ""      ; last recorded cursor position
 global g_lastY      := ""
 global g_btnState   := Map()   ; button name -> was-down at the last poll
 global g_lastActive := 0       ; hwnd of the last recorded foreground window
+global g_geoHwnd    := 0       ; geometry anchors: tracked foreground window
+global g_geoSig     := ""      ; its last sampled "x|y|w|h|state"
+global g_geoDirty   := false   ; geometry changed but not yet recorded
+global g_geoStable  := 0       ; consecutive unchanged samples after a change
 
 ; config values (see WriteDefaultConfig for meaning)
 global g_recordKey     := ""
@@ -113,6 +118,7 @@ StartRecording() {
         ; anchor to the window that is active as the macro begins, then to
         ; every switch — playback re-activates that program at each anchor
         g_lastActive := 0
+        g_geoHwnd := 0, g_geoSig := "", g_geoDirty := false, g_geoStable := 0
         RecordActiveWindow()
         SetTimer(RecordActiveWindow, 150)
     }
@@ -131,7 +137,13 @@ StopRecording() {
         g_ih := 0
     }
     g_recording := false
+    FlushGeo()
     CleanUnmatched()
+    if g_windowAnchors {
+        StripAltTabs()
+        StripTaskbarSwitchClicks()
+    }
+    FuseDoubleClicks()
     if g_events.Length {
         SaveMacro()
         Notify("■ Recorded " g_events.Length " events", 2000)
@@ -180,8 +192,17 @@ PollMouse() {
         try now := GetKeyState(b)
         if (now != g_btnState[b]) {
             g_btnState[b] := now
+            ; class of the window under the cursor: lets post-processing
+            ; recognize taskbar clicks used for window switching
+            cls := ""
+            if now {
+                try {
+                    MouseGetPos(, , &under)
+                    cls := WinGetClass(under)
+                }
+            }
             g_events.Push({t: A_TickCount, kind: "m", msg: def[now ? 1 : 2]
-                , x: mx, y: my, data: def[3]})
+                , x: mx, y: my, data: def[3], cls: cls})
         }
     }
 }
@@ -200,19 +221,126 @@ RecWheel(delta, msg, *) {
 ; changes during recording. Tabs are stripped from titles (TSV storage).
 RecordActiveWindow() {
     global g_events, g_lastActive
+    ; shell surfaces that become foreground transiently (the Alt-Tab
+    ; switcher, Task View, the taskbar, Start/search) must never become
+    ; anchors — re-activating them during playback would be nonsense
+    static SKIP := Map("MultitaskingViewFrame", 1, "XamlExplorerHostIslandWindow", 1
+        , "TaskSwitcherWnd", 1, "TaskSwitcherOverlayWnd", 1, "ForegroundStaging", 1
+        , "Shell_TrayWnd", 1, "Shell_SecondaryTrayWnd", 1, "Windows.UI.Core.CoreWindow", 1)
+    global g_geoHwnd, g_geoSig, g_geoDirty, g_geoStable
     if !g_recording
         return
     hwnd := 0
     try hwnd := WinGetID("A")
-    if (!hwnd || hwnd = g_lastActive)
+    if !hwnd
         return
-    g_lastActive := hwnd
-    exe := "", title := ""
-    try exe := WinGetProcessName(hwnd)
-    try title := StrReplace(WinGetTitle(hwnd), "`t", " ")
-    if (exe = "" && title = "")
+    cls := ""
+    try cls := WinGetClass(hwnd)
+    if SKIP.Has(cls)
         return
-    g_events.Push({t: A_TickCount, kind: "w", exe: exe, title: title})
+    if (hwnd != g_lastActive) {
+        FlushGeo()   ; pending geometry change of the previous window
+        g_lastActive := hwnd
+        exe := "", title := "", path := ""
+        try exe := WinGetProcessName(hwnd)
+        try title := StrReplace(WinGetTitle(hwnd), "`t", " ")
+        try path := WinGetProcessPath(hwnd)
+        if (exe != "" || title != "")
+            g_events.Push({t: A_TickCount, kind: "w", exe: exe, title: title, path: path})
+        g_geoHwnd := hwnd
+        g_geoSig := GeoSig(hwnd)
+        g_geoDirty := false
+        g_geoStable := 0
+        return
+    }
+    ; same window still in front: watch its geometry — a moved/resized/
+    ; maximized/minimized window becomes a corrective "g" anchor once the
+    ; change has settled (two stable samples)
+    sig := GeoSig(hwnd)
+    if (sig != g_geoSig) {
+        g_geoSig := sig
+        g_geoDirty := true
+        g_geoStable := 0
+    } else if g_geoDirty {
+        g_geoStable += 1
+        if (g_geoStable >= 2)
+            FlushGeo()
+    }
+}
+
+GeoSig(hwnd) {
+    x := 0, y := 0, w := 0, h := 0, s := 0
+    try WinGetPos(&x, &y, &w, &h, hwnd)
+    try s := WinGetMinMax(hwnd)
+    return x "|" y "|" w "|" h "|" s
+}
+
+FlushGeo() {
+    global g_events, g_geoHwnd, g_geoSig, g_geoDirty
+    if (g_geoDirty && g_geoHwnd) {
+        parts := StrSplit(g_geoSig, "|")
+        exe := "", title := ""
+        try exe := WinGetProcessName(g_geoHwnd)
+        try title := StrReplace(WinGetTitle(g_geoHwnd), "`t", " ")
+        if ((exe != "" || title != "") && parts.Length = 5)
+            g_events.Push({t: A_TickCount, kind: "g", exe: exe, title: title
+                , x: Integer(parts[1]), y: Integer(parts[2]), w: Integer(parts[3])
+                , h: Integer(parts[4]), state: Integer(parts[5])})
+    }
+    g_geoDirty := false
+}
+
+; Alt+Tab app switching is replaced by the window anchor: replaying the
+; keystrokes would open the switcher and hope the window order matches —
+; the anchor jumps straight to the right window instead. A sequence is
+; stripped only when it is unmistakably switcher-use: Alt down … Alt up
+; containing at least one Tab and nothing but Tab/Shift/arrows/Esc and
+; plain mouse moves. Anything else while Alt is held (Alt+F4, clicks in
+; the switcher, …) leaves the sequence untouched. Anchors recorded inside
+; the range are preserved.
+StripAltTabs() {
+    global g_events
+    IsAlt := (vk) => (vk = 0x12 || vk = 0xA4 || vk = 0xA5)
+    IsSwitcherKey := (vk) => (vk = 0x09 || vk = 0x10 || vk = 0xA0 || vk = 0xA1
+        || (vk >= 0x25 && vk <= 0x28) || vk = 0x1B || IsAlt(vk))
+    out := []
+    i := 1
+    n := g_events.Length
+    while (i <= n) {
+        e := g_events[i]
+        if (e.kind = "k" && !e.up && IsAlt(e.vk)) {
+            j := i + 1
+            sawTab := false
+            pure := true
+            while (j <= n) {
+                x := g_events[j]
+                if (x.kind = "k") {
+                    if (x.vk = e.vk && x.up)
+                        break
+                    if (x.vk = 0x09)
+                        sawTab := true
+                    else if !IsSwitcherKey(x.vk)
+                        pure := false
+                } else if (x.kind = "m" && x.msg != 0x200) {
+                    pure := false
+                }
+                j += 1
+            }
+            if (j <= n && sawTab && pure) {
+                k := i
+                while (k <= j) {
+                    if (g_events[k].kind = "w")
+                        out.Push(g_events[k])
+                    k += 1
+                }
+                i := j + 1
+                continue
+            }
+        }
+        out.Push(e)
+        i += 1
+    }
+    g_events := out
 }
 
 ; Drop key/button events without a counterpart in the recording: the tail
@@ -276,11 +404,123 @@ CleanUnmatched() {
     g_events := keep
 }
 
+; A taskbar click that switched window is dropped: the click position is
+; fragile (button order changes as windows come and go) and the window
+; anchor recorded right after it makes the switch directly. The click's
+; own window class was captured at record time; only clicks followed by an
+; anchor within 2 s are treated as switches — tray-icon clicks and other
+; taskbar interactions are left untouched.
+StripTaskbarSwitchClicks() {
+    global g_events
+    static TASKBAR := Map("Shell_TrayWnd", 1, "Shell_SecondaryTrayWnd", 1
+        , "MSTaskListWClass", 1, "MSTaskSwWClass", 1)
+    static UPOF := Map(0x201, 0x202, 0x204, 0x205, 0x207, 0x208)
+    out := []
+    i := 1
+    n := g_events.Length
+    while (i <= n) {
+        e := g_events[i]
+        if (e.kind = "m" && UPOF.Has(e.msg) && e.HasOwnProp("cls") && TASKBAR.Has(e.cls)) {
+            j := i + 1
+            while (j <= n) {
+                x := g_events[j]
+                if (x.kind = "m" && x.msg = UPOF[e.msg])
+                    break
+                j += 1
+            }
+            hasAnchor := false
+            k := j + 1
+            while (k <= n && g_events[k].t - e.t <= 2000) {
+                if (g_events[k].kind = "w") {
+                    hasAnchor := true
+                    break
+                }
+                k += 1
+            }
+            if (j <= n && hasAnchor) {
+                k := i + 1
+                while (k <= j - 1) {
+                    out.Push(g_events[k])
+                    k += 1
+                }
+                i := j + 1
+                continue
+            }
+        }
+        out.Push(e)
+        i += 1
+    }
+    g_events := out
+}
+
+; Two clicks of the same button within the system double-click time and
+; radius are fused into one atomic double-click event — replayed as a real
+; double-click regardless of playback mode (a large fixed delay would
+; otherwise split it into two single clicks).
+FuseDoubleClicks() {
+    global g_events
+    static DOWN2DBL := Map(0x201, 0x203, 0x204, 0x206, 0x207, 0x209)
+    static UPOF := Map(0x201, 0x202, 0x204, 0x205, 0x207, 0x208)
+    dblTime := DllCall("GetDoubleClickTime", "uint")
+    dx := DllCall("GetSystemMetrics", "int", 36)   ; SM_CXDOUBLECLK
+    dy := DllCall("GetSystemMetrics", "int", 37)   ; SM_CYDOUBLECLK
+    out := []
+    i := 1
+    n := g_events.Length
+    while (i <= n) {
+        e := g_events[i]
+        endIdx := (e.kind = "m" && DOWN2DBL.Has(e.msg))
+            ? FindDbl(i, e, dblTime, dx, dy, UPOF) : 0
+        if endIdx {
+            out.Push({t: e.t, kind: "m", msg: DOWN2DBL[e.msg], x: e.x, y: e.y, data: 0})
+            i := endIdx + 1
+            continue
+        }
+        out.Push(e)
+        i += 1
+    }
+    g_events := out
+}
+
+; From the down at index i: expect up, down (in time + radius), up of the
+; same button, allowing only plain mouse moves in between. Returns the
+; index of the second up, or 0.
+FindDbl(i, d1, dblTime, dx, dy, UPOF) {
+    global g_events
+    n := g_events.Length
+    upMsg := UPOF[d1.msg]
+    stage := 1
+    j := i + 1
+    while (j <= n) {
+        x := g_events[j]
+        if (x.kind = "m" && x.msg = 0x200) {
+            j += 1
+            continue
+        }
+        if (x.kind != "m")
+            return 0
+        if (stage = 1) {
+            if (x.msg != upMsg)
+                return 0
+            stage := 2
+        } else if (stage = 2) {
+            if (x.msg != d1.msg || x.t - d1.t > dblTime
+                || Abs(x.x - d1.x) > dx || Abs(x.y - d1.y) > dy)
+                return 0
+            stage := 3
+        } else {
+            return (x.msg = upMsg) ? j : 0
+        }
+        j += 1
+    }
+    return 0
+}
+
 ; ── Playback ────────────────────────────────────────────────────────────
 Play(*) {
     global g_playing, g_stopPlay
     if g_recording {
-        Notify("Encore: still recording — " g_recordKey " stops it first")
+        StopRecording()   ; the play key doubles as stop while recording
         return
     }
     if g_playing {
@@ -335,6 +575,8 @@ Play(*) {
                         downKeys[e.vk] := e.sc
                 } else if (e.kind = "w") {
                     ReplayWindowSwitch(e)
+                } else if (e.kind = "g") {
+                    ReplayGeometry(e)
                 } else {
                     ReplayMouse(e, downBtns)
                 }
@@ -373,8 +615,12 @@ Play(*) {
 ReplayMouse(e, downBtns) {
     static DOWN := Map(0x201, "Left", 0x204, "Right", 0x207, "Middle")
     static UP   := Map(0x202, "Left", 0x205, "Right", 0x208, "Middle")
+    static DBL  := Map(0x203, "Left", 0x206, "Right", 0x209, "Middle")
     if (e.msg = 0x200) {                       ; move
         MouseMove(e.x, e.y, 0)
+    } else if DBL.Has(e.msg) {                 ; fused double-click
+        MouseMove(e.x, e.y, 0)
+        Click DBL[e.msg] " 2"
     } else if DOWN.Has(e.msg) {
         MouseMove(e.x, e.y, 0)
         Click DOWN[e.msg] " Down"
@@ -406,11 +652,9 @@ ReplayMouse(e, downBtns) {
     }
 }
 
-; "Switch to program X": activate the anchored window — matched by title
-; substring + process name, falling back to the process alone, then to the
-; title alone — and wait until it is actually active. Already active or not
-; found: no-op, the rest of the macro plays on.
-ReplayWindowSwitch(e) {
+; Anchored-window matching: title substring + process name, falling back
+; to the process alone, then to the title alone.
+FindTargetWindow(e) {
     hwnd := 0
     try {
         if (e.title != "" && e.exe != "" && WinExist(e.title " ahk_exe " e.exe))
@@ -420,11 +664,47 @@ ReplayWindowSwitch(e) {
         else if (e.title != "" && WinExist(e.title))
             hwnd := WinExist()
     }
+    return hwnd
+}
+
+; "Switch to program X": activate the anchored window and wait until it is
+; actually active. If the program is not running at all, start it from the
+; recorded process path and wait for its window. Already active or not
+; startable: no-op, the rest of the macro plays on.
+ReplayWindowSwitch(e) {
+    hwnd := FindTargetWindow(e)
+    if (!hwnd && e.HasOwnProp("path") && e.path != "" && FileExist(e.path)) {
+        try {
+            Run(e.path)
+            if (e.exe != "" && WinWait("ahk_exe " e.exe, , 10))
+                hwnd := WinExist()
+        }
+    }
     if (!hwnd || WinActive(hwnd))
         return
     try {
         WinActivate(hwnd)
         WinWaitActive(hwnd, , 2)
+    }
+}
+
+; Corrective geometry anchor: snap the window to its recorded position,
+; size and min/max state — replayed drags and title-bar-button clicks are
+; imprecise, this makes the end state exact.
+ReplayGeometry(e) {
+    hwnd := FindTargetWindow(e)
+    if !hwnd
+        return
+    try {
+        if (e.state = -1) {
+            WinMinimize(hwnd)
+        } else if (e.state = 1) {
+            WinMaximize(hwnd)
+        } else {
+            if (WinGetMinMax(hwnd) != 0)
+                WinRestore(hwnd)
+            WinMove(e.x, e.y, e.w, e.h, hwnd)
+        }
     }
 }
 
@@ -458,7 +738,9 @@ SaveMacro() {
         if (e.kind = "k")
             out .= "k`t" e.t "`t" e.vk "`t" e.sc "`t" (e.up ? 1 : 0) "`n"
         else if (e.kind = "w")
-            out .= "w`t" e.t "`t" e.exe "`t" e.title "`n"
+            out .= "w`t" e.t "`t" e.exe "`t" e.title "`t" (e.HasOwnProp("path") ? e.path : "") "`n"
+        else if (e.kind = "g")
+            out .= "g`t" e.t "`t" e.exe "`t" e.title "`t" e.x "`t" e.y "`t" e.w "`t" e.h "`t" e.state "`n"
         else
             out .= "m`t" e.t "`t" e.msg "`t" e.x "`t" e.y "`t" e.data "`n"
     }
@@ -511,7 +793,12 @@ LoadMacroFile(path) {
                 g_events.Push({t: Integer(f[2]), kind: "m", msg: Integer(f[3])
                     , x: Integer(f[4]), y: Integer(f[5]), data: Integer(f[6])})
             else if (f.Length >= 4 && f[1] = "w")
-                g_events.Push({t: Integer(f[2]), kind: "w", exe: f[3], title: f[4]})
+                g_events.Push({t: Integer(f[2]), kind: "w", exe: f[3], title: f[4]
+                    , path: f.Length >= 5 ? f[5] : ""})
+            else if (f.Length >= 9 && f[1] = "g")
+                g_events.Push({t: Integer(f[2]), kind: "g", exe: f[3], title: f[4]
+                    , x: Integer(f[5]), y: Integer(f[6]), w: Integer(f[7])
+                    , h: Integer(f[8]), state: Integer(f[9])})
         }
     }
 }
@@ -582,7 +869,7 @@ WriteDefaultConfig() {
 ; RecordHotkey: starts/stops recording. AHK syntax: + = Shift, ^ = Ctrl,
 ;   # = Win, ! = Alt. Empty disables the hotkey.
 ; PlayHotkey: plays the last recording. Pressing it during playback - or
-;   Esc - aborts.
+;   Esc - aborts; pressing it during recording stops the recording.
 ; Mode: original (recorded timing) or fixed (fixed pause between events).
 ; Speed: playback speed factor in original mode - 2 = twice as fast.
 ; FixedDelayMs: the pause between events in fixed mode.
@@ -636,6 +923,9 @@ InitTray() {
         recsMenu.Disable("(no recordings)")
     }
     recsMenu.Add()
+    recsMenu.Add("Name recording…", NameRecording)
+    recsMenu.Add("Save copy as…", SaveCopyAs)
+    recsMenu.Add("Load macro file…", LoadMacroDialog)
     recsMenu.Add("Open recordings folder", OpenMacroDir)
     repMenu := Menu()
     for n in [1, 2, 3, 5, 10, 25] {
@@ -674,6 +964,67 @@ InitTray() {
 OpenMacroDir(*) {
     try DirCreate(g_macroDir)
     try Run(g_macroDir)
+}
+
+; Rename the selected recording — the file name IS the name in the menu.
+NameRecording(*) {
+    global g_currentFile
+    if (g_currentFile = "" || !FileExist(g_currentFile)) {
+        Notify("Encore: no recording selected")
+        return
+    }
+    cur := SubStr(g_currentFile, InStr(g_currentFile, "\", , -1) + 1)
+    cur := SubStr(cur, 1, -6)
+    ib := InputBox("Name for the recording:", "Encore", "w400 h130", cur)
+    if (ib.Result != "OK" || Trim(ib.Value) = "")
+        return
+    name := RegExReplace(Trim(ib.Value), '[\\/:*?"<>|]', "_")
+    newPath := g_macroDir "\" name ".macro"
+    if (newPath = g_currentFile)
+        return
+    if FileExist(newPath) {
+        Notify("Encore: a recording with that name already exists")
+        return
+    }
+    try {
+        FileMove(g_currentFile, newPath)
+        g_currentFile := newPath
+    } catch {
+        Notify("Encore: could not rename the recording")
+    }
+    InitTray()
+}
+
+SaveCopyAs(*) {
+    global g_currentFile
+    if (g_currentFile = "" || !FileExist(g_currentFile)) {
+        Notify("Encore: no recording selected")
+        return
+    }
+    dest := ""
+    try dest := FileSelect("S", g_currentFile, "Save a copy of the recording", "Macro (*.macro)")
+    if (dest = "")
+        return
+    if !RegExMatch(dest, "i)\.macro$")
+        dest .= ".macro"
+    try FileCopy(g_currentFile, dest, true)
+    InitTray()
+}
+
+LoadMacroDialog(*) {
+    global g_events, g_currentFile
+    if (g_recording || g_playing)
+        return
+    try DirCreate(g_macroDir)
+    f := ""
+    try f := FileSelect(3, g_macroDir, "Load a macro", "Macro (*.macro)")
+    if (f = "")
+        return
+    g_events := []
+    LoadMacroFile(f)
+    g_currentFile := f
+    InitTray()
+    Notify("Loaded " g_events.Length " events")
 }
 
 SetRepeat(n, *) {
