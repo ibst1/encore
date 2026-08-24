@@ -1,4 +1,4 @@
-﻿; Encore — v1.1.0 (2026-08-24)
+﻿; Encore — v1.2.0 (2026-08-24)
 ;
 ; Records keyboard and mouse activity (keys, clicks, movements, wheel) and
 ; plays it back — at the original speed (adjustable factor) or with a fixed
@@ -25,10 +25,18 @@
 CoordMode "Mouse", "Screen"
 CoordMode "ToolTip", "Screen"
 
+#Include "lib\WebView2.ahk"
+#Include "lib\JSON.ahk"
+
 global g_configFile  := A_ScriptDir "\Encore config.ini"
 global g_macroDir    := A_ScriptDir "\macros"
 global g_currentFile := ""     ; path of the selected recording
-global g_events      := []     ; recorded events: {t, kind "k"/"m"/"w", ...}
+global g_events      := []     ; recorded events: {t, kind "k"/"m"/"w"/"g", ...}
+global g_curProps    := Map()  ; per-recording playback overrides (repeat/pause/speed/mode)
+global g_uiWin       := 0      ; management window (WebView2), created lazily
+global g_uiCtrl      := 0
+global g_uiCore      := 0
+global g_uiReady     := false
 global g_recording  := false
 global g_playing    := false
 global g_stopPlay   := false
@@ -67,7 +75,8 @@ InitTray()
 
 ; External control: PostMessage the registered window message
 ; "ENCORE_CMD" to the script's hidden window — wParam 1 = toggle
-; recording, 2 = play, 3 = abort playback, 4 = reload the configuration.
+; recording, 2 = play, 3 = abort playback, 4 = reload the configuration,
+; 5 = open the management window.
 OnMessage(DllCall("RegisterWindowMessageW", "str", "ENCORE_CMD", "uint"), IpcCmd)
 
 IpcCmd(wParam, lParam, msg, hwnd) {
@@ -79,6 +88,7 @@ IpcCmd(wParam, lParam, msg, hwnd) {
             if g_playing
                 g_stopPlay := true
         case 4: SetTimer(() => LoadConfig(true), -1)
+        case 5: SetTimer(OpenUi, -1)
     }
 }
 
@@ -151,6 +161,7 @@ StopRecording() {
         Notify("■ Nothing recorded", 2000)
     }
     InitTray()
+    PushMacro()
 }
 
 RecKeyDown(ih, vk, sc) {
@@ -517,6 +528,22 @@ FindDbl(i, d1, dblTime, dx, dy, UPOF) {
 }
 
 ; ── Playback ────────────────────────────────────────────────────────────
+EffInt(key, glob) {
+    global g_curProps
+    if (g_curProps.Get(key, "") != "") {
+        try return Integer(g_curProps[key])
+    }
+    return glob
+}
+
+EffNum(key, glob) {
+    global g_curProps
+    if (g_curProps.Get(key, "") != "") {
+        try return Number(g_curProps[key])
+    }
+    return glob
+}
+
 Play(*) {
     global g_playing, g_stopPlay
     if g_recording {
@@ -538,11 +565,20 @@ Play(*) {
     ; a still-held Win/Ctrl would combine with the replayed keys
     for m in ["LWin", "RWin", "LShift", "RShift", "LCtrl", "RCtrl", "LAlt", "RAlt"]
         KeyWait m, "T2"
-    reps := g_repeat
+    ; effective playback values: per-recording overrides beat the globals
+    reps := EffInt("repeat", g_repeat)
+    repPause := EffInt("pause", g_repeatPauseMs)
+    fixedDelay := g_fixedDelayMs
+    speed := EffNum("speed", g_speed)
+    mode := (g_curProps.Get("mode", "") != "") ? g_curProps["mode"] : g_mode
+    if (speed <= 0)
+        speed := 1.0
+    if (reps < 0)
+        reps := 1
     Notify("▶ Playing " g_events.Length " events"
         (reps = 0 ? " (until aborted)" : reps > 1 ? " ×" reps : "") "…", 1500)
     SendLevel 1   ; replayed input is visible to other AHK scripts, like real typing
-    list := (g_mode = "fixed") ? FixedModeList() : g_events
+    list := (mode = "fixed") ? FixedModeList() : g_events
     downKeys := Map()      ; vk → sc for keys currently sent down
     downBtns := Map()      ; button name → true
     ; the try guarantees the cleanup below always runs — an error midway
@@ -558,10 +594,10 @@ Play(*) {
             for e in list {
                 if (stopped := (g_stopPlay || GetKeyState("Escape", "P")))
                     break
-                if (g_mode = "fixed") {
-                    Sleep g_fixedDelayMs
+                if (mode = "fixed") {
+                    Sleep fixedDelay
                 } else {
-                    wait := Round((e.t - prevT) / g_speed)
+                    wait := Round((e.t - prevT) / speed)
                     if (wait > 0)
                         Sleep Min(wait, g_maxWaitMs)
                     prevT := e.t
@@ -585,7 +621,7 @@ Play(*) {
                 break
             ; pause between repetitions, abortable in short slices
             waited := 0
-            while (waited < g_repeatPauseMs) {
+            while (waited < repPause) {
                 Sleep 50
                 waited += 50
                 if (stopped := (g_stopPlay || GetKeyState("Escape", "P")))
@@ -732,8 +768,26 @@ FixedModeList() {
 ; Each recording becomes its own timestamped file in macros\ and is
 ; selected as the current one; the tray menu lists them all.
 SaveMacro() {
-    global g_currentFile
+    global g_currentFile, g_curProps
+    g_curProps := Map()   ; a fresh recording has no playback overrides
+    try DirCreate(g_macroDir)
+    path := g_macroDir "\" FormatTime(, "yyyy-MM-dd HH.mm.ss") ".macro"
+    WriteMacroFile(path)
+    g_currentFile := path
+}
+
+; A "p" header line carries per-recording playback overrides
+; (repeat, pause ms, speed, mode) — empty field = use the global setting.
+WriteMacroFile(path) {
+    global g_events, g_curProps
     out := ""
+    hasProps := false
+    for , v in g_curProps
+        if (v != "")
+            hasProps := true
+    if hasProps
+        out .= "p`t" g_curProps.Get("repeat", "") "`t" g_curProps.Get("pause", "")
+            . "`t" g_curProps.Get("speed", "") "`t" g_curProps.Get("mode", "") "`n"
     for e in g_events {
         if (e.kind = "k")
             out .= "k`t" e.t "`t" e.vk "`t" e.sc "`t" (e.up ? 1 : 0) "`n"
@@ -744,11 +798,8 @@ SaveMacro() {
         else
             out .= "m`t" e.t "`t" e.msg "`t" e.x "`t" e.y "`t" e.data "`n"
     }
-    try DirCreate(g_macroDir)
-    path := g_macroDir "\" FormatTime(, "yyyy-MM-dd HH.mm.ss") ".macro"
     try FileDelete(path)
     try FileAppend(out, path, "UTF-8")
-    g_currentFile := path
 }
 
 ; Newest first. (Array has no built-in sort in v2.0 — insertion sort.)
@@ -777,16 +828,22 @@ SelectMacro(path, *) {
     LoadMacroFile(path)
     g_currentFile := path
     InitTray()
+    PushMacro()
 }
 
 LoadMacroFile(path) {
-    global g_events
+    global g_events, g_curProps
+    g_curProps := Map()
     if !FileExist(path)
         return
     try {
         loop parse FileRead(path, "UTF-8"), "`n", "`r" {
             f := StrSplit(A_LoopField, "`t")
-            if (f.Length >= 5 && f[1] = "k")
+            if (f.Length >= 5 && f[1] = "p") {
+                for i, k in ["repeat", "pause", "speed", "mode"]
+                    if (f[i + 1] != "")
+                        g_curProps[k] := f[i + 1]
+            } else if (f.Length >= 5 && f[1] = "k")
                 g_events.Push({t: Integer(f[2]), kind: "k", vk: Integer(f[3])
                     , sc: Integer(f[4]), up: f[5] = "1"})
             else if (f.Length >= 6 && f[1] = "m")
@@ -938,6 +995,8 @@ InitTray() {
     if (g_repeat = 0)
         repMenu.Check("Until aborted")
     A_TrayMenu.Delete()
+    A_TrayMenu.Add("Open Encore", OpenUi)
+    A_TrayMenu.Add()
     A_TrayMenu.Add(recLabel, ToggleRecord)
     A_TrayMenu.Add(playLabel, Play)
     A_TrayMenu.Add()
@@ -954,11 +1013,12 @@ InitTray() {
     A_TrayMenu.Check("Playback: " (g_mode = "fixed" ? "fixed delay" : "original speed"))
     if FileExist(StartupShortcut())
         A_TrayMenu.Check("Start with Windows")
-    A_TrayMenu.Default := recLabel
+    A_TrayMenu.Default := "Open Encore"   ; double-clicking the tray icon opens the window
     cur := g_currentFile != "" ? SubStr(g_currentFile, InStr(g_currentFile, "\", , -1) + 1) : ""
     A_IconTip := "Encore — " (g_recording ? "recording…"
         : g_playing ? "playing…"
         : cur != "" ? cur " (" g_events.Length " events)" : "no recordings")
+    PushState()
 }
 
 OpenMacroDir(*) {
@@ -1024,6 +1084,7 @@ LoadMacroDialog(*) {
     LoadMacroFile(f)
     g_currentFile := f
     InitTray()
+    PushMacro()
     Notify("Loaded " g_events.Length " events")
 }
 
@@ -1049,6 +1110,227 @@ ToggleAutostart(*) {
         try FileCreateShortcut(A_AhkPath, lnk, A_ScriptDir, '"' A_ScriptFullPath '"')
     }
     InitTray()
+}
+
+; ── Management window (WebView2, same architecture as Expanto) ──────────
+; Created lazily on first open; closing hides it so reopening is instant.
+OpenUi(*) {
+    global g_uiWin, g_uiCtrl, g_uiCore
+    if !g_uiWin {
+        DllCall("shell32\SetCurrentProcessExplicitAppUserModelID", "str", "Encore.Application.1")
+        g_uiWin := Gui("+Resize +MinSize640x420", "Encore")
+        g_uiWin.OnEvent("Close", (*) => g_uiWin.Hide())
+        g_uiWin.OnEvent("Size", UiResize)
+        g_uiWin.Show("w980 h640")
+        DllCall("dwmapi\DwmSetWindowAttribute", "ptr", g_uiWin.hwnd, "uint", 20, "int*", 1, "uint", 4)
+        try {
+            g_uiCtrl := WebView2.create(g_uiWin.hwnd, , 0, "", "", 0
+                , A_ScriptDir "\lib\WebView2Loader.dll")
+            g_uiCtrl.Fill()
+            g_uiCore := g_uiCtrl.CoreWebView2
+            g_uiCore.add_WebMessageReceived(UiMessage)
+            g_uiCore.Navigate("file:///" StrReplace(A_ScriptDir "\ui\index.html", "\", "/"))
+        } catch as err {
+            g_uiWin.Destroy()
+            g_uiWin := 0, g_uiCtrl := 0, g_uiCore := 0
+            LogError(err, "")
+            Notify("Encore: could not start the UI (WebView2 runtime missing?)")
+            return
+        }
+    } else {
+        g_uiWin.Show()
+    }
+}
+
+UiResize(guiObj, minMax, w, h) {
+    global g_uiCtrl
+    if (minMax != -1 && IsObject(g_uiCtrl))
+        try g_uiCtrl.Fill()
+}
+
+UiSend(script) {
+    global g_uiReady, g_uiCore
+    if (!g_uiReady || !IsObject(g_uiCore))
+        return
+    try g_uiCore.ExecuteScriptAsync(script)
+    catch
+        g_uiReady := false
+}
+
+UiMessage(sender, args) {
+    global g_uiReady, g_stopPlay
+    try msg := JSON.Load(args.WebMessageAsJson)
+    catch
+        return
+    if (!(msg is Map) || !msg.Has("action"))
+        return
+    switch msg["action"] {
+        case "ready":
+            g_uiReady := true
+            PushState()
+            PushMacro()
+        case "record": SetTimer(ToggleRecord, -1)
+        case "play": SetTimer(Play, -1)
+        case "stop":
+            if g_playing
+                g_stopPlay := true
+        case "select":
+            SelectMacro(g_macroDir "\" msg["name"] ".macro")
+        case "rename": UiRename(msg["name"], msg["newName"])
+        case "delete": UiDelete(msg["name"])
+        case "deleteEvents": UiDeleteEvents(msg["ranges"])
+        case "saveMacroSettings": UiSaveMacroProps(msg)
+        case "saveSettings": UiSaveSettings(msg)
+        case "openFolder": OpenMacroDir()
+    }
+}
+
+PushState() {
+    global g_currentFile, g_curProps
+    if !g_uiReady
+        return
+    list := []
+    for m in ListMacros() {
+        info := MacroInfo(m.p)
+        list.Push(Map("name", m.name, "events", info.n, "durMs", info.dur))
+    }
+    props := Map()
+    for k, v in g_curProps
+        if (v != "")
+            props[k] := v
+    cur := g_currentFile != ""
+        ? SubStr(SubStr(g_currentFile, InStr(g_currentFile, "\", , -1) + 1), 1, -6) : ""
+    st := Map("recordings", list, "current", cur
+        , "recording", g_recording ? 1 : 0, "playing", g_playing ? 1 : 0
+        , "macroProps", props
+        , "settings", Map("recordKey", g_recordKey, "playKey", g_playKey
+            , "mode", g_mode, "speed", g_speed, "fixedDelayMs", g_fixedDelayMs
+            , "repeat", g_repeat, "repeatPauseMs", g_repeatPauseMs
+            , "anchors", g_windowAnchors ? 1 : 0))
+    UiSend("window.receiveState(" JSON.Dump(st) ")")
+}
+
+PushMacro() {
+    global g_events
+    if !g_uiReady
+        return
+    cap := Min(g_events.Length, 5000)
+    arr := []
+    loop cap {
+        e := g_events[A_Index]
+        if (e.kind = "k")
+            arr.Push(Map("kind", "k", "t", e.t, "vk", e.vk, "sc", e.sc, "up", e.up ? 1 : 0))
+        else if (e.kind = "w")
+            arr.Push(Map("kind", "w", "t", e.t, "exe", e.exe, "title", e.title))
+        else if (e.kind = "g")
+            arr.Push(Map("kind", "g", "t", e.t, "exe", e.exe, "title", e.title
+                , "x", e.x, "y", e.y, "w", e.w, "h", e.h, "state", e.state))
+        else
+            arr.Push(Map("kind", "m", "t", e.t, "msg", e.msg, "x", e.x, "y", e.y, "data", e.data))
+    }
+    payload := Map("events", arr, "truncated", g_events.Length > cap ? 1 : 0)
+    UiSend("window.receiveMacro(" JSON.Dump(payload) ")")
+}
+
+; Light parse for the sidebar: event count and duration of a macro file.
+MacroInfo(path) {
+    n := 0, tFirst := 0, tLast := 0
+    try {
+        loop parse FileRead(path, "UTF-8"), "`n", "`r" {
+            f := StrSplit(A_LoopField, "`t")
+            if (f.Length < 2 || f[1] = "p")
+                continue
+            n += 1
+            t := 0
+            try t := Integer(f[2])
+            if !tFirst
+                tFirst := t
+            tLast := t
+        }
+    }
+    return {n: n, dur: tLast > tFirst ? tLast - tFirst : 0}
+}
+
+UiRename(old, newName) {
+    global g_currentFile
+    src := g_macroDir "\" old ".macro"
+    name := RegExReplace(Trim(newName), '[\\/:*?"<>|]', "_")
+    dst := g_macroDir "\" name ".macro"
+    if (name = "" || !FileExist(src) || FileExist(dst))
+        return
+    try {
+        FileMove(src, dst)
+        if (g_currentFile = src)
+            g_currentFile := dst
+    }
+    InitTray()
+}
+
+UiDelete(name) {
+    global g_currentFile, g_events, g_curProps
+    if (g_recording || g_playing)
+        return
+    p := g_macroDir "\" name ".macro"
+    try FileDelete(p)
+    if (g_currentFile = p) {
+        g_currentFile := ""
+        g_events := []
+        g_curProps := Map()
+        macros := ListMacros()
+        if macros.Length {
+            g_currentFile := macros[1].p
+            LoadMacroFile(g_currentFile)
+        }
+        PushMacro()
+    }
+    InitTray()
+}
+
+; Delete the raw events behind the display steps the user selected —
+; ranges are 1-based inclusive [from, to] pairs into the event array.
+UiDeleteEvents(ranges) {
+    global g_events, g_currentFile
+    if (g_currentFile = "" || g_recording || g_playing || !(ranges is Array))
+        return
+    keep := []
+    for idx, e in g_events {
+        drop := false
+        for r in ranges {
+            if (idx >= r[1] && idx <= r[2]) {
+                drop := true
+                break
+            }
+        }
+        if !drop
+            keep.Push(e)
+    }
+    g_events := keep
+    WriteMacroFile(g_currentFile)
+    InitTray()
+    PushMacro()
+}
+
+UiSaveMacroProps(msg) {
+    global g_curProps, g_currentFile
+    if (g_currentFile = "")
+        return
+    g_curProps := Map()
+    for k in ["repeat", "pause", "speed", "mode"]
+        if (msg.Has(k) && Trim(msg[k]) != "")
+            g_curProps[k] := Trim(msg[k])
+    WriteMacroFile(g_currentFile)
+    InitTray()
+}
+
+UiSaveSettings(msg) {
+    global g_configFile
+    static PAIRS := Map("recordKey", "RecordHotkey", "playKey", "PlayHotkey"
+        , "mode", "Mode", "speed", "Speed", "fixedDelayMs", "FixedDelayMs"
+        , "repeat", "Repeat", "repeatPauseMs", "RepeatPauseMs", "anchors", "WindowAnchors")
+    for k, ini in PAIRS
+        if msg.Has(k)
+            try IniWrite(msg[k], g_configFile, "Settings", ini)
+    LoadConfig(true)
 }
 
 ; Notices go to the top center of the screen, away from the mouse — a
