@@ -28,6 +28,8 @@
       <span class="spacer"></span>
       <button id="btnRename">Rename</button>
       <button id="btnDelete">Delete</button>
+      <button id="btnAddStep">＋ Add step</button>
+      <button id="btnEditStep" disabled>✎ Edit step</button>
       <button id="btnDelSteps" disabled>Delete selected steps</button>
     </div>
     <div id="propsBar">
@@ -53,8 +55,31 @@
   </div>
 </div>
 
-<div id="settingsModal" hidden>
-  <div id="settingsBox">
+<div id="stepModal" class="modal" hidden>
+  <div class="modal-box">
+    <h2 id="stepModalTitle">Add step</h2>
+    <div class="row"><label>Type</label>
+      <select id="stType">
+        <option value="text">Type text</option>
+        <option value="pause">Pause</option>
+        <option value="send">Send keys (AHK syntax)</option>
+        <option value="switch">Switch to program</option>
+      </select>
+    </div>
+    <div class="row st-field" data-for="text"><label>Text</label><input id="stText" type="text" style="width:240px"></div>
+    <div class="row st-field" data-for="pause"><label>Milliseconds</label><input id="stMs" type="text"></div>
+    <div class="row st-field" data-for="send"><label>Keys (e.g. ^s or {Enter})</label><input id="stKeys" type="text" style="width:180px"></div>
+    <div class="row st-field" data-for="switch"><label>Program (exe)</label><input id="stExe" type="text" style="width:180px"></div>
+    <div class="row st-field" data-for="switch"><label>Title contains (optional)</label><input id="stTitle" type="text" style="width:180px"></div>
+    <div class="btns">
+      <button id="btnStepCancel">Cancel</button>
+      <button id="btnStepSave" class="primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="settingsModal" class="modal" hidden>
+  <div class="modal-box" id="settingsBox">
     <h2>Settings</h2>
     <div class="row"><label>Record hotkey</label><input id="sRecordKey" type="text"></div>
     <div class="row"><label>Play hotkey</label><input id="sPlayKey" type="text"></div>

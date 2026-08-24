@@ -13,6 +13,7 @@ A Windows macro recorder in the system tray: record what you do — keystrokes, 
 - **Window anchors**: at the start of a recording and at every window switch, Encore records *which program* was active. During playback it re-activates that program (matched by process name, with title-substring fallback) and waits until it is active — so switching to Excel mid-recording reliably switches to Excel mid-playback, even if a replayed Alt+Tab would have landed elsewhere.
 - The tray icon shows the state: blue square = idle, red dot = recording, green triangle = playing.
 - **Management window** (double-click the tray icon, or tray → *Open Encore*): browse the recordings with event counts and durations, read the selected macro as human-readable steps ("Switch to EXCEL.EXE", "Type hello", "Ctrl+C", "Double-click at (512, 300)", "Maximize"), select steps and delete them, rename/delete recordings, set per-recording playback overrides (repeat, pause, speed, mode — empty = global) and edit all global settings without touching the ini file. Requires the Microsoft Edge WebView2 Runtime (preinstalled on Windows 10/11 with Edge).
+- **Edit and add steps**: a "Type …" step can be edited — its raw keystrokes are replaced by a text event played back with SendText, so you can change what a macro types without re-recording. New steps can be inserted anywhere: typed text, an explicit pause, raw keys in AutoHotkey Send syntax (e.g. `^s` or `{Enter}`), or a program switch. These appear in the macro file as `t`/`d`/`s`/`w` lines and can be hand-edited too.
 
 ## Installation
 

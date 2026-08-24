@@ -1,4 +1,4 @@
-﻿; Encore — v1.2.0 (2026-08-24)
+﻿; Encore — v1.3.0 (2026-08-24)
 ;
 ; Records keyboard and mouse activity (keys, clicks, movements, wheel) and
 ; plays it back — at the original speed (adjustable factor) or with a fixed
@@ -613,6 +613,18 @@ Play(*) {
                     ReplayWindowSwitch(e)
                 } else if (e.kind = "g") {
                     ReplayGeometry(e)
+                } else if (e.kind = "t") {
+                    SendText e.text
+                } else if (e.kind = "s") {
+                    try Send e.keys   ; user-written AHK syntax — a bad step is skipped
+                } else if (e.kind = "d") {
+                    waited2 := 0
+                    while (waited2 < e.ms) {   ; explicit pause, abortable in slices
+                        Sleep Min(50, e.ms - waited2)
+                        waited2 += 50
+                        if (g_stopPlay || GetKeyState("Escape", "P"))
+                            break
+                    }
                 } else {
                     ReplayMouse(e, downBtns)
                 }
@@ -795,11 +807,22 @@ WriteMacroFile(path) {
             out .= "w`t" e.t "`t" e.exe "`t" e.title "`t" (e.HasOwnProp("path") ? e.path : "") "`n"
         else if (e.kind = "g")
             out .= "g`t" e.t "`t" e.exe "`t" e.title "`t" e.x "`t" e.y "`t" e.w "`t" e.h "`t" e.state "`n"
+        else if (e.kind = "t")
+            out .= "t`t" e.t "`t" CleanField(e.text) "`n"
+        else if (e.kind = "s")
+            out .= "s`t" e.t "`t" CleanField(e.keys) "`n"
+        else if (e.kind = "d")
+            out .= "d`t" e.t "`t" e.ms "`n"
         else
             out .= "m`t" e.t "`t" e.msg "`t" e.x "`t" e.y "`t" e.data "`n"
     }
     try FileDelete(path)
     try FileAppend(out, path, "UTF-8")
+}
+
+; TSV storage: tabs and line breaks cannot appear inside a field.
+CleanField(s) {
+    return StrReplace(StrReplace(StrReplace(s, "`t", " "), "`r", ""), "`n", " ")
 }
 
 ; Newest first. (Array has no built-in sort in v2.0 — insertion sort.)
@@ -856,6 +879,12 @@ LoadMacroFile(path) {
                 g_events.Push({t: Integer(f[2]), kind: "g", exe: f[3], title: f[4]
                     , x: Integer(f[5]), y: Integer(f[6]), w: Integer(f[7])
                     , h: Integer(f[8]), state: Integer(f[9])})
+            else if (f.Length >= 3 && f[1] = "t")
+                g_events.Push({t: Integer(f[2]), kind: "t", text: f[3]})
+            else if (f.Length >= 3 && f[1] = "s")
+                g_events.Push({t: Integer(f[2]), kind: "s", keys: f[3]})
+            else if (f.Length >= 3 && f[1] = "d")
+                g_events.Push({t: Integer(f[2]), kind: "d", ms: Integer(f[3])})
         }
     }
 }
@@ -1179,6 +1208,8 @@ UiMessage(sender, args) {
         case "rename": UiRename(msg["name"], msg["newName"])
         case "delete": UiDelete(msg["name"])
         case "deleteEvents": UiDeleteEvents(msg["ranges"])
+        case "setStep": UiSetStep(msg)
+        case "insertStep": UiInsertStep(msg)
         case "saveMacroSettings": UiSaveMacroProps(msg)
         case "saveSettings": UiSaveSettings(msg)
         case "openFolder": OpenMacroDir()
@@ -1225,6 +1256,12 @@ PushMacro() {
         else if (e.kind = "g")
             arr.Push(Map("kind", "g", "t", e.t, "exe", e.exe, "title", e.title
                 , "x", e.x, "y", e.y, "w", e.w, "h", e.h, "state", e.state))
+        else if (e.kind = "t")
+            arr.Push(Map("kind", "t", "t", e.t, "text", e.text))
+        else if (e.kind = "s")
+            arr.Push(Map("kind", "s", "t", e.t, "keys", e.keys))
+        else if (e.kind = "d")
+            arr.Push(Map("kind", "d", "t", e.t, "ms", e.ms))
         else
             arr.Push(Map("kind", "m", "t", e.t, "msg", e.msg, "x", e.x, "y", e.y, "data", e.data))
     }
@@ -1304,6 +1341,83 @@ UiDeleteEvents(ranges) {
         if !drop
             keep.Push(e)
     }
+    g_events := keep
+    WriteMacroFile(g_currentFile)
+    InitTray()
+    PushMacro()
+}
+
+; Build a single event from a step spec sent by the UI. type: "text",
+; "pause", "send" or "switch". Returns 0 on an invalid spec.
+BuildStepEvent(msg, t) {
+    type := msg.Get("type", "")
+    if (type = "text" && Trim(msg.Get("text", "")) != "")
+        return {t: t, kind: "t", text: msg["text"]}
+    if (type = "send" && Trim(msg.Get("keys", "")) != "")
+        return {t: t, kind: "s", keys: Trim(msg["keys"])}
+    if (type = "pause") {
+        ms := 0
+        try ms := Integer(msg.Get("ms", ""))
+        if (ms > 0)
+            return {t: t, kind: "d", ms: ms}
+    }
+    if (type = "switch" && (Trim(msg.Get("exe", "")) != "" || Trim(msg.Get("title", "")) != ""))
+        return {t: t, kind: "w", exe: Trim(msg.Get("exe", ""))
+            , title: Trim(msg.Get("title", "")), path: ""}
+    return 0
+}
+
+; Replace the events behind one display step ([from..to], 1-based) with a
+; single new event — how "edit step" turns a raw typing run into a text
+; event, or changes a pause/send/switch step.
+UiSetStep(msg) {
+    global g_events, g_currentFile
+    if (g_currentFile = "" || g_recording || g_playing)
+        return
+    from := 0, to := 0
+    try from := Integer(msg.Get("from", 0)), to := Integer(msg.Get("to", 0))
+    if (from < 1 || to > g_events.Length || from > to)
+        return
+    ev := BuildStepEvent(msg, g_events[from].t)
+    if !ev
+        return
+    keep := []
+    for idx, e in g_events {
+        if (idx = from)
+            keep.Push(ev)
+        if (idx < from || idx > to)
+            keep.Push(e)
+    }
+    g_events := keep
+    WriteMacroFile(g_currentFile)
+    InitTray()
+    PushMacro()
+}
+
+; Insert a new event before position `at` (1-based; > length = append).
+UiInsertStep(msg) {
+    global g_events, g_currentFile
+    if (g_currentFile = "" || g_recording || g_playing)
+        return
+    at := g_events.Length + 1
+    try at := Integer(msg.Get("at", at))
+    if (at < 1)
+        at := 1
+    if (at > g_events.Length + 1)
+        at := g_events.Length + 1
+    ; timestamp of the neighbour = no extra wait in original-timing mode
+    t := g_events.Length ? g_events[Min(at, g_events.Length)].t : 0
+    ev := BuildStepEvent(msg, t)
+    if !ev
+        return
+    keep := []
+    for idx, e in g_events {
+        if (idx = at)
+            keep.Push(ev)
+        keep.Push(e)
+    }
+    if (at = g_events.Length + 1)
+        keep.Push(ev)
     g_events := keep
     WriteMacroFile(g_currentFile)
     InitTray()

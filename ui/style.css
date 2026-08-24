@@ -145,8 +145,8 @@ button.primary:hover { background: var(--accent2); }
 #stepsEmpty { padding: 30px; color: var(--text-dim); text-align: center; }
 .truncNote { padding: 8px 12px; color: var(--text-dim); font-style: italic; }
 
-/* ── settings modal ──────────────────────────────────────────────────── */
-#settingsModal {
+/* ── modals ──────────────────────────────────────────────────────────── */
+.modal {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,.5);
@@ -154,21 +154,31 @@ button.primary:hover { background: var(--accent2); }
   align-items: center;
   justify-content: center;
 }
-#settingsModal[hidden] { display: none; }
-#settingsBox {
+.modal[hidden] { display: none; }
+.modal-box {
   background: var(--bg2);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 18px 22px;
   min-width: 420px;
 }
-#settingsBox h2 { font-size: 15px; margin-bottom: 12px; }
-#settingsBox .row {
+.modal-box h2 { font-size: 15px; margin-bottom: 12px; }
+.modal-box .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   margin: 7px 0;
 }
-#settingsBox .row label { color: var(--text-dim); }
-#settingsBox .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.modal-box .row label { color: var(--text-dim); }
+.modal-box input, .modal-box select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  width: 90px;
+}
+.modal-box select { width: auto; }
+.modal-box .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
