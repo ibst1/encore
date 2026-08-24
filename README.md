@@ -5,7 +5,11 @@ A Windows macro recorder in the system tray: record what you do — keystrokes, 
 - **Shift+F12** starts recording; the same key stops it. **F12** plays the selected recording; F12 again — or **Esc** — aborts. Both hotkeys are configurable.
 - **Playback modes**: original timing (with an adjustable speed factor) or a fixed pause between events.
 - **Repeat**: play 1–N times or until aborted, with a configurable pause between repetitions (tray menu → *Repeat*).
-- **Every recording is kept**: each one is saved as a timestamped file in `macros\` and selectable from the tray menu (*Recordings*). Rename or delete the files to manage them; the file name is the menu name.
+- **Every recording is kept**: each one is saved as a timestamped file in `macros\` and selectable from the tray menu (*Recordings*). Give the selected recording a proper name with *Name recording…*, export it with *Save copy as…*, or load a `.macro` file from anywhere with *Load macro file…* — the file name is the menu name, so managing the files in Explorer works too.
+- **Alt+Tab is smart-replayed**: an Alt+Tab app switch in the recording is stripped and replaced by its window anchor — playback jumps straight to the right window without ever opening the window switcher. Taskbar clicks used for window switching are handled the same way (the button order on the taskbar is never trusted).
+- **Programs are started when needed**: anchors record the full process path, so if the target program is not running at playback, Encore starts it and waits for its window.
+- **Double-clicks stay double-clicks**: two rapid clicks are fused into one atomic double-click event, so they survive fixed-delay playback intact.
+- **Window geometry is corrected**: moving, resizing, maximizing or minimizing a window during recording adds a corrective anchor — playback snaps the window to the exact recorded position, size and state after the replayed drag.
 - **Window anchors**: at the start of a recording and at every window switch, Encore records *which program* was active. During playback it re-activates that program (matched by process name, with title-substring fallback) and waits until it is active — so switching to Excel mid-recording reliably switches to Excel mid-playback, even if a replayed Alt+Tab would have landed elsewhere.
 - The tray icon shows the state: blue square = idle, red dot = recording, green triangle = playing.
 
@@ -30,7 +34,7 @@ A Windows macro recorder in the system tray: record what you do — keystrokes, 
 | Key | Default | Meaning |
 |---|---|---|
 | `RecordHotkey` | `+F12` | Starts/stops recording. AutoHotkey syntax: `+` Shift, `^` Ctrl, `#` Win, `!` Alt. Empty disables |
-| `PlayHotkey` | `F12` | Plays the selected recording; during playback it aborts |
+| `PlayHotkey` | `F12` | Plays the selected recording; during playback it aborts, and during recording it stops the recording |
 | `Mode` | `original` | `original` (recorded timing) or `fixed` (fixed pause between events) |
 | `Speed` | `1.0` | Playback speed factor in original mode — `2` = twice as fast |
 | `FixedDelayMs` | `50` | The pause between events in fixed mode |
