@@ -97,6 +97,11 @@ function groupEvents() {
       push('⏱', 'Wait ' + e.ms + ' ms', i, i)
         .edit = { type: 'pause', ms: e.ms };
       i++;
+    } else if (e.kind === 'v') {
+      push('⎘', 'Type next data value <span class="kbd">{value'
+        + (e.col > 1 ? ':' + e.col : '') + '}</span> (column ' + e.col + ')', i, i)
+        .edit = { type: 'value', col: e.col };
+      i++;
     } else if (e.kind === 'ww') {
       push('⏳', 'Wait for window <b>' + esc(e.exe || e.title) + '</b>'
         + (e.title && e.exe ? ' <span class="txt">' + esc(e.title) + '</span>' : '')
@@ -314,8 +319,22 @@ function renderSteps() {
 
 function updateDelBtn() {
   document.getElementById('btnDelSteps').disabled = !selSteps.size || truncated;
-  const one = selSteps.size === 1 ? steps[[...selSteps][0]] : null;
+  const oneIdx = selSteps.size === 1 ? [...selSteps][0] : -1;
+  const one = oneIdx >= 0 ? steps[oneIdx] : null;
   document.getElementById('btnEditStep').disabled = truncated || !(one && one.edit);
+  document.getElementById('btnMoveUp').disabled = truncated || oneIdx < 1;
+  document.getElementById('btnMoveDown').disabled =
+    truncated || oneIdx < 0 || oneIdx >= steps.length - 1;
+}
+
+function moveStep(dir) {
+  if (selSteps.size !== 1) return;
+  const idx = [...selSteps][0];
+  const s = steps[idx];
+  const dest = steps[idx + (dir === 'up' ? -1 : 1)];
+  if (!dest) return;
+  post({ action: 'moveEvents', from: s.from, to: s.to,
+    destFrom: dest.from, destTo: dest.to, dir });
 }
 
 // ── step modal (add / edit) ────────────────────────────────────────────
@@ -335,6 +354,7 @@ function showStepModal(mode, preset) {
   $('stTitle').value = p.title || '';
   $('stTimeout').value = p.timeout != null ? p.timeout : '10000';
   $('stActive').value = p.active ? '1' : '0';
+  $('stCol').value = p.col != null ? p.col : '1';
   applyStepType();
   $('stepModal').hidden = false;
 }
@@ -361,6 +381,11 @@ function renderState() {
   const cur = state.recordings.find(r => r.name === state.current);
   document.getElementById('macroMeta').textContent =
     cur ? cur.events + ' events · ' + fmtDur(cur.durMs) : '';
+  // actions that need a selected recording: disable rather than no-op
+  const noMacro = !state.current;
+  for (const id of ['btnRename', 'btnDelete', 'btnExportAhk', 'btnAddStep',
+                    'btnTrim', 'btnSchedule', 'btnSaveProps', 'btnSaveData'])
+    document.getElementById(id).disabled = noMacro;
   const p = state.macroProps || {};
   document.getElementById('pRepeat').value = p.repeat != null ? p.repeat : '';
   document.getElementById('pPause').value = p.pause != null ? p.pause : '';
@@ -368,6 +393,36 @@ function renderState() {
   document.getElementById('pMode').value = p.mode || '';
   document.getElementById('pHotkey').value = p.hotkey || '';
   document.getElementById('pCoords').value = p.coords || '';
+  const dt = document.getElementById('dataText');
+  if (document.activeElement !== dt)   // don't clobber while the user types
+    dt.value = state.dataText || '';
+  updateDataPanel();
+}
+
+// ── data panel visibility ──────────────────────────────────────────────
+// Explicit choice (the Data button) persists in localStorage; without one
+// the panel auto-opens when the macro has a data list or a {value} step.
+let hasVStep = false;
+
+function dataPanelChoice() {
+  try { return localStorage.getItem('encoreDataPanel'); } catch (e) { return null; }
+}
+
+function updateDataPanel() {
+  const dt = document.getElementById('dataText');
+  const rows = (dt.value.match(/^.*\S.*$/gm) || []).length;
+  document.getElementById('dataInfo').textContent = rows ? '· ' + rows + ' rows' : '';
+  const choice = dataPanelChoice();
+  const visible = choice !== null ? choice === '1' : (rows > 0 || hasVStep);
+  document.getElementById('dataPanel').hidden = !visible;
+  const btn = document.getElementById('btnDataPanel');
+  btn.classList.toggle('active', visible);
+  btn.textContent = rows ? 'Data · ' + rows : 'Data';
+}
+
+function toggleDataPanel(show) {
+  try { localStorage.setItem('encoreDataPanel', show ? '1' : '0'); } catch (e) {}
+  updateDataPanel();
 }
 
 // ── AHK entry points ───────────────────────────────────────────────────
@@ -378,12 +433,49 @@ window.receiveState = function (st) {
 window.receiveMacro = function (payload) {
   events = payload.events || [];
   truncated = !!payload.truncated;
+  hasVStep = events.some(e => e.kind === 'v');
   renderSteps();
+  updateDataPanel();
 };
 window.setMacroFolder = function (dir) {
   const el = document.getElementById('sMacroFolder');
   if (el) el.value = dir;
 };
+window.receiveTask = function (t) {
+  const el = document.getElementById('schStatus');
+  if (el) el.textContent = t.exists ? t.info : 'No schedule for this macro.';
+  renderAllTasks(t.all || []);
+};
+
+function renderAllTasks(list) {
+  const wrap = document.getElementById('schAllWrap');
+  const tbl = document.getElementById('schAll');
+  if (!wrap || !tbl) return;
+  wrap.hidden = list.length === 0;
+  tbl.innerHTML = '';
+  list.forEach(t => {
+    const tr = document.createElement('tr');
+    if (t.orphan) tr.className = 'orphan';
+    const name = document.createElement('td');
+    name.textContent = t.name;
+    // An orphan still fires — say so, rather than showing a name that means nothing.
+    name.title = t.orphan ? 'The macro for this schedule no longer exists' : t.name;
+    const next = document.createElement('td');
+    next.textContent = t.next || '';
+    const act = document.createElement('td');
+    const del = document.createElement('button');
+    del.textContent = '✕';
+    del.title = 'Remove this schedule';
+    del.addEventListener('click', () => {
+      if (!confirm('Remove the schedule for "' + t.name + '"?')) return;
+      post({ action: 'removeTaskNamed', name: t.name });
+      document.getElementById('schStatus').textContent = 'Removing…';
+    });
+    act.appendChild(del);
+    tr.append(name, next, act);
+    tbl.appendChild(tr);
+  });
+}
 
 // ── UI wiring ──────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
@@ -426,12 +518,51 @@ window.addEventListener('DOMContentLoaded', () => {
     const spec = { type: $('stType').value, text: $('stText').value,
       ms: $('stMs').value.trim(), keys: $('stKeys').value,
       exe: $('stExe').value.trim(), title: $('stTitle').value.trim(),
-      timeout: $('stTimeout').value.trim(), active: $('stActive').value };
+      timeout: $('stTimeout').value.trim(), active: $('stActive').value,
+      col: $('stCol').value.trim() };
     if (stepMode.mode === 'edit')
       post({ action: 'setStep', from: stepMode.from, to: stepMode.to, ...spec });
     else
       post({ action: 'insertStep', at: stepMode.at, ...spec });
     $('stepModal').hidden = true;
+  });
+  $('btnSaveData').addEventListener('click', () => {
+    if (state && state.current)
+      post({ action: 'saveData', text: $('dataText').value });
+  });
+  $('btnDataPanel').addEventListener('click', () =>
+    toggleDataPanel($('dataPanel').hidden));
+  $('btnDataClose').addEventListener('click', () => toggleDataPanel(false));
+  $('dataText').addEventListener('input', updateDataPanel);
+  $('btnMoveUp').addEventListener('click', () => moveStep('up'));
+  $('btnMoveDown').addEventListener('click', () => moveStep('down'));
+  $('btnTrim').addEventListener('click', () => {
+    if (state && state.current) post({ action: 'trim' });
+  });
+  $('btnSchedule').addEventListener('click', () => {
+    if (!state || !state.current) return;
+    $('schName').textContent = state.current;
+    $('schStatus').textContent = 'Checking…';
+    $('scheduleModal').hidden = false;
+    post({ action: 'queryTask' });
+  });
+  const schFields = () => {
+    const f = $('schFreq').value;
+    $('schDayRow').style.display = f === 'WEEKLY' ? '' : 'none';
+    $('schDateRow').style.display = f === 'ONCE' ? '' : 'none';
+  };
+  $('schFreq').addEventListener('change', schFields);
+  schFields();
+  $('btnSchClose').addEventListener('click', () => { $('scheduleModal').hidden = true; });
+  $('btnSchCreate').addEventListener('click', () => {
+    post({ action: 'scheduleTask', freq: $('schFreq').value,
+      time: $('schTime').value.trim(), day: $('schDay').value,
+      date: $('schDate').value.trim() });
+    $('schStatus').textContent = 'Creating…';
+  });
+  $('btnSchRemove').addEventListener('click', () => {
+    post({ action: 'removeTask' });
+    $('schStatus').textContent = 'Removing…';
   });
   $('btnSaveProps').addEventListener('click', () => {
     post({ action: 'saveMacroSettings',

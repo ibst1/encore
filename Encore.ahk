@@ -1,4 +1,4 @@
-﻿; Encore — v1.4.0 (2026-08-24)
+﻿; Encore — v1.5.0 (2026-08-25)
 ;
 ; Records keyboard and mouse activity (keys, clicks, movements, wheel) and
 ; plays it back — at the original speed (adjustable factor) or with a fixed
@@ -72,6 +72,7 @@ global g_playRefX      := 0
 global g_playRefY      := 0
 global g_playRefT      := 0
 global g_playCoords    := ""   ; "" = screen coordinates, "window" = relative
+global g_playRow       := ""   ; current data row during data-driven playback
 
 ; Command line:
 ;   Encore.ahk <macro>                    play that macro and exit
@@ -604,6 +605,52 @@ FindDbl(i, d1, dblTime, dx, dy, UPOF) {
     return 0
 }
 
+; ── Data-driven playback ────────────────────────────────────────────────
+; A {value} step + a data list = one repetition per row: the step types
+; the current row (tab-separated columns; col picks one). The list lives
+; in "<macro name>.data" beside the macro file.
+DataFileFor(macroPath) {
+    return (macroPath != "" && SubStr(macroPath, -6) = ".macro")
+        ? SubStr(macroPath, 1, -6) ".data" : ""
+}
+
+MacroHasValueStep() {
+    global g_events
+    for e in g_events
+        if (e.kind = "v")
+            return true
+    return false
+}
+
+; Which value a {value} step types for this row. ok=false means the row simply does
+; not have that column, and the caller must STOP rather than type something else:
+; the old code fell back to the whole raw row, so a two-column list with one broken
+; row typed the ID into the field meant for the result — silently, into whatever
+; record was open. col is clamped because a hand-edited macro file can hold 0, and a
+; wholly blank row reports no column at all (StrSplit("") is an empty array) — which
+; is right, and moot anyway since LoadDataRows drops blank lines.
+DataColumn(row, col) {
+    col := (col >= 1) ? col : 1
+    parts := StrSplit(row, "`t")
+    if (col > parts.Length)
+        return {ok: false, value: "", col: col}
+    return {ok: true, value: parts[col], col: col}
+}
+
+LoadDataRows() {
+    global g_currentFile
+    rows := []
+    df := DataFileFor(g_currentFile)
+    if (df = "" || !FileExist(df))
+        return rows
+    try {
+        loop parse FileRead(df, "UTF-8"), "`n", "`r"
+            if (Trim(A_LoopField) != "")
+                rows.Push(A_LoopField)
+    }
+    return rows
+}
+
 ; ── Playback ────────────────────────────────────────────────────────────
 EffInt(key, glob) {
     global g_curProps
@@ -622,7 +669,7 @@ EffNum(key, glob) {
 }
 
 Play(*) {
-    global g_playing, g_stopPlay, g_playRef, g_playRefT, g_playCoords
+    global g_playing, g_stopPlay, g_playRef, g_playRefT, g_playCoords, g_playRow
     if g_recording {
         StopRecording()   ; the play key doubles as stop while recording
         return
@@ -671,8 +718,21 @@ Play(*) {
         speed := 1.0
     if (reps < 0)
         reps := 1
-    Notify("▶ Playing " g_events.Length " events"
-        (reps = 0 ? " (until aborted)" : reps > 1 ? " ×" reps : "") "…", 1500)
+    ; data-driven: with a {value} step, one repetition per data row
+    dataRows := []
+    if MacroHasValueStep() {
+        dataRows := LoadDataRows()
+        if !dataRows.Length {
+            Notify("Encore: the macro has a {value} step but the data list is empty")
+            g_playing := false
+            InitTray()
+            return
+        }
+        reps := dataRows.Length
+    }
+    suffix := dataRows.Length ? " × " dataRows.Length " data rows"
+        : reps = 0 ? " (until aborted)" : reps > 1 ? " ×" reps : ""
+    Notify("▶ Playing " g_events.Length " events" suffix "…", 1500)
     SendLevel 1   ; replayed input is visible to other AHK scripts, like real typing
     list := (mode = "fixed") ? FixedModeList() : g_events
     downKeys := Map()      ; vk → sc for keys currently sent down
@@ -691,6 +751,8 @@ Play(*) {
         rep := 0
         loop {
             rep += 1
+            if dataRows.Length
+                g_playRow := dataRows[rep]
             prevT := list.Length ? list[1].t : 0
             for e in list {
                 if (stopped := (g_stopPlay || GetKeyState("Escape", "P")))
@@ -735,6 +797,15 @@ Play(*) {
                     }
                 } else if (e.kind = "ww") {
                     ReplayWaitWindow(e)
+                } else if (e.kind = "v") {
+                    dv := DataColumn(g_playRow, e.col)
+                    if !dv.ok {
+                        Notify("Encore: row " rep " has no column " dv.col " — stopped", 4000)
+                        g_stopPlay := true
+                        stopped := true
+                        break
+                    }
+                    SendText(dv.value)
                 } else {
                     ReplayMouse(e, downBtns)
                 }
@@ -976,6 +1047,8 @@ WriteMacroFile(path) {
             out .= "d`t" e.t "`t" e.ms "`n"
         else if (e.kind = "ww")
             out .= "ww`t" e.t "`t" e.exe "`t" e.title "`t" e.ms "`t" e.active "`n"
+        else if (e.kind = "v")
+            out .= "v`t" e.t "`t" e.col "`n"
         else
             out .= "m`t" e.t "`t" e.msg "`t" e.x "`t" e.y "`t" e.data
                 . (e.HasOwnProp("wx") ? "`t" e.wx "`t" e.wy : "") "`n"
@@ -1056,6 +1129,8 @@ LoadMacroFile(path) {
             else if (f.Length >= 6 && f[1] = "ww")
                 g_events.Push({t: Integer(f[2]), kind: "ww", exe: f[3], title: f[4]
                     , ms: Integer(f[5]), active: f[6] = "1" ? 1 : 0})
+            else if (f.Length >= 3 && f[1] = "v")
+                g_events.Push({t: Integer(f[2]), kind: "v", col: Integer(f[3])})
         }
     }
 }
@@ -1279,7 +1354,13 @@ NameRecording(*) {
     }
     try {
         FileMove(g_currentFile, newPath)
+        if FileExist(DataFileFor(g_currentFile))
+            FileMove(DataFileFor(g_currentFile), DataFileFor(newPath))
         g_currentFile := newPath
+        ; The schedule follows the name here too — renaming from the tray used to
+        ; leave the task behind on the old name, which is the very orphan the
+        ; schedule list was added to clean up after.
+        SetTimer(MoveTask.Bind(cur, name), -1)
     } catch {
         Notify("Encore: could not rename the recording")
     }
@@ -1350,9 +1431,10 @@ OpenUi(*) {
     if !g_uiWin {
         DllCall("shell32\SetCurrentProcessExplicitAppUserModelID", "str", "Encore.Application.1")
         g_uiWin := Gui("+Resize +MinSize640x420", "Encore")
-        g_uiWin.OnEvent("Close", (*) => g_uiWin.Hide())
+        g_uiWin.OnEvent("Close", (*) => (SaveUiGeometry(), g_uiWin.Hide()))
         g_uiWin.OnEvent("Size", UiResize)
-        g_uiWin.Show("w980 h640")
+        g_uiWin.Show(ReadUiGeometry())
+        FitUiToScreen()
         DllCall("dwmapi\DwmSetWindowAttribute", "ptr", g_uiWin.hwnd, "uint", 20, "int*", 1, "uint", 4)
         try {
             g_uiCtrl := WebView2.create(g_uiWin.hwnd, , 0, "", "", 0
@@ -1370,7 +1452,74 @@ OpenUi(*) {
         }
     } else {
         g_uiWin.Show()
+        FitUiToScreen()
     }
+}
+
+; Window geometry is remembered between sessions, but always clamped to
+; the work area of the monitor it lands on — a window wider than the
+; screen puts its toolbar buttons out of reach (and a stale saved size
+; from another monitor setup would do the same).
+ReadUiGeometry() {
+    w := 980, h := 640
+    try {
+        w := Integer(IniRead(g_configFile, "Window", "W", "980"))
+        h := Integer(IniRead(g_configFile, "Window", "H", "640"))
+    }
+    x := IniRead(g_configFile, "Window", "X", "")
+    y := IniRead(g_configFile, "Window", "Y", "")
+    opt := "w" Max(640, w) " h" Max(420, h)
+    if (x != "" && y != "")
+        opt := "x" x " y" y " " opt
+    return opt
+}
+
+SaveUiGeometry() {
+    global g_uiWin, g_configFile
+    if !g_uiWin
+        return
+    try {
+        if (WinGetMinMax(g_uiWin.hwnd) != 0)   ; don't store a maximized/minimized rect
+            return
+        ; Position from the window rect, size from the CLIENT rect: Gui.Show("w… h…")
+        ; sizes the client area, so storing the outer size grew the window by the
+        ; title bar and borders on every single session.
+        WinGetPos(&x, &y, , , g_uiWin.hwnd)
+        WinGetClientPos( , , &w, &h, g_uiWin.hwnd)
+        IniWrite(x, g_configFile, "Window", "X")
+        IniWrite(y, g_configFile, "Window", "Y")
+        IniWrite(w, g_configFile, "Window", "W")
+        IniWrite(h, g_configFile, "Window", "H")
+    }
+}
+
+FitUiToScreen() {
+    global g_uiWin
+    if !g_uiWin
+        return
+    try {
+        if (WinGetMinMax(g_uiWin.hwnd) != 0)
+            return
+        WinGetPos(&x, &y, &w, &h, g_uiWin.hwnd)
+        MonitorGetWorkArea(MonitorFromWindow(g_uiWin.hwnd), &l, &t, &r, &b)
+        w := Min(w, r - l), h := Min(h, b - t)
+        x := Min(Max(x, l), r - w), y := Min(Max(y, t), b - h)
+        WinMove(x, y, w, h, g_uiWin.hwnd)
+    }
+}
+
+MonitorFromWindow(hwnd) {
+    h := DllCall("MonitorFromWindow", "ptr", hwnd, "uint", 2, "ptr")   ; NEAREST
+    info := Buffer(40, 0)
+    NumPut("UInt", 40, info, 0)
+    if !DllCall("GetMonitorInfoW", "ptr", h, "ptr", info)
+        return 0   ; MonitorGetWorkArea(0) = primary
+    loop MonitorGetCount() {
+        MonitorGet(A_Index, &ml, &mt, &mr, &mb)
+        if (ml = NumGet(info, 4, "Int") && mt = NumGet(info, 8, "Int"))
+            return A_Index
+    }
+    return 0
 }
 
 UiResize(guiObj, minMax, w, h) {
@@ -1413,6 +1562,13 @@ UiMessage(sender, args) {
         case "setStep": UiSetStep(msg)
         case "insertStep": UiInsertStep(msg)
         case "setDelay": UiSetDelay(msg)
+        case "saveData": UiSaveData(msg)
+        case "moveEvents": UiMoveEvents(msg)
+        case "trim": UiTrim()
+        case "queryTask": SetTimer(UiQueryTask, -1)         ; schtasks calls block briefly
+        case "removeTaskNamed": SetTimer(UiRemoveTaskNamed.Bind(msg.Get("name", "")), -1)
+        case "scheduleTask": SetTimer(() => UiScheduleTask(msg), -1)
+        case "removeTask": SetTimer(UiRemoveTask, -1)
         case "saveMacroSettings": UiSaveMacroProps(msg)
         case "saveSettings": UiSaveSettings(msg)
         case "exportAhk": SetTimer((*) => ExportStandalone(), -1)   ; detached: opens a file dialog
@@ -1436,7 +1592,14 @@ PushState() {
             props[k] := v
     cur := g_currentFile != ""
         ? SubStr(SubStr(g_currentFile, InStr(g_currentFile, "\", , -1) + 1), 1, -6) : ""
-    st := Map("recordings", list, "current", cur
+    dataText := ""
+    df := DataFileFor(g_currentFile)
+    ; Read the list WHOLE. It used to come across capped at 65536 characters, and
+    ; since the panel writes back whatever it is showing, the first save after
+    ; opening a long list silently threw the tail away.
+    if (df != "" && FileExist(df))
+        try dataText := FileRead(df, "UTF-8")
+    st := Map("recordings", list, "current", cur, "dataText", dataText
         , "recording", g_recording ? 1 : 0, "playing", g_playing ? 1 : 0
         , "macroProps", props
         , "settings", Map("recordKey", g_recordKey, "playKey", g_playKey
@@ -1471,6 +1634,8 @@ PushMacro() {
         else if (e.kind = "ww")
             arr.Push(Map("kind", "ww", "t", e.t, "exe", e.exe, "title", e.title
                 , "ms", e.ms, "active", e.active))
+        else if (e.kind = "v")
+            arr.Push(Map("kind", "v", "t", e.t, "col", e.col))
         else
             arr.Push(Map("kind", "m", "t", e.t, "msg", e.msg, "x", e.x, "y", e.y, "data", e.data))
     }
@@ -1568,11 +1733,22 @@ UiRename(old, newName) {
     dst := g_macroDir "\" name ".macro"
     if (name = "" || !FileExist(src) || FileExist(dst))
         return
+    moved := false
     try {
         FileMove(src, dst)
+        moved := true
         if (g_currentFile = src)
             g_currentFile := dst
+        if FileExist(DataFileFor(src))   ; the data list follows its macro
+            FileMove(DataFileFor(src), DataFileFor(dst))
     }
+    ; …and so does its schedule, or the task would keep firing on a name that no
+    ; longer exists, with no way to see it from inside the app. Only when the file
+    ; really moved: FileMove throws while OneDrive or an editor holds the file, and
+    ; repointing the schedule then would take it away from the macro that still has
+    ; the old name and hand it to one that does not exist.
+    if moved
+        SetTimer(MoveTask.Bind(old, name), -1)
     InitTray()
 }
 
@@ -1582,6 +1758,9 @@ UiDelete(name) {
         return
     p := g_macroDir "\" name ".macro"
     try FileDelete(p)
+    try FileDelete(DataFileFor(p))
+    ; A deleted macro must not leave a task behind that fires on nothing.
+    SetTimer(() => CaptureCmd('schtasks /Delete /F /TN "' TaskName(name) '"'), -1)
     if (g_currentFile = p) {
         g_currentFile := ""
         g_events := []
@@ -1637,6 +1816,13 @@ BuildStepEvent(msg, t) {
     if (type = "switch" && (Trim(msg.Get("exe", "")) != "" || Trim(msg.Get("title", "")) != ""))
         return {t: t, kind: "w", exe: Trim(msg.Get("exe", ""))
             , title: Trim(msg.Get("title", "")), path: ""}
+    if (type = "value") {
+        col := 1
+        try col := Integer(msg.Get("col", "1"))
+        if (col < 1)
+            col := 1
+        return {t: t, kind: "v", col: col}
+    }
     if (type = "waitwin" && (Trim(msg.Get("exe", "")) != "" || Trim(msg.Get("title", "")) != "")) {
         tmo := 10000
         try tmo := Integer(msg.Get("timeout", "10000"))
@@ -1732,6 +1918,282 @@ UiSetDelay(msg) {
     WriteMacroFile(g_currentFile)
     InitTray()
     PushMacro()
+}
+
+; Save the data list for the selected recording (empty text removes it).
+UiSaveData(msg) {
+    global g_currentFile
+    if (g_currentFile = "")
+        return
+    df := DataFileFor(g_currentFile)
+    if (df = "")
+        return
+    text := msg.Get("text", "")
+    try FileDelete(df)
+    if (Trim(text, " `t`r`n") != "")
+        try FileAppend(text, df, "UTF-8")
+    InitTray()
+}
+
+; ── Step reordering and trimming ────────────────────────────────────────
+; Move events [from..to] before destFrom (dir=up) or after destTo
+; (dir=down). Each event keeps its lead-in gap through the move, and the
+; timeline is rebuilt cumulatively — so the pause before a step travels
+; with it and timestamps stay monotonic.
+MoveEventBlock(arr, from, to, insertAt) {
+    gaps := []
+    prev := 0
+    for i, e in arr {
+        gaps.Push(i = 1 ? 0 : e.t - prev)
+        prev := e.t
+    }
+    block := [], blockG := [], rest := [], restG := []
+    for i, e in arr {
+        if (i >= from && i <= to) {
+            block.Push(e), blockG.Push(gaps[i])
+        } else {
+            rest.Push(e), restG.Push(gaps[i])
+        }
+    }
+    out := [], outG := []
+    for i, e in rest {
+        if (i = insertAt) {
+            for j, b in block {
+                out.Push(b), outG.Push(blockG[j])
+            }
+        }
+        out.Push(e), outG.Push(restG[i])
+    }
+    if (insertAt = rest.Length + 1) {
+        for j, b in block {
+            out.Push(b), outG.Push(blockG[j])
+        }
+    }
+    t := 0
+    for i, e in out {
+        t += outG[i]
+        e.t := t
+    }
+    return out
+}
+
+UiMoveEvents(msg) {
+    global g_events, g_currentFile
+    if (g_currentFile = "" || g_recording || g_playing)
+        return
+    from := 0, to := 0, destFrom := 0, destTo := 0
+    try {
+        from := Integer(msg.Get("from", 0)), to := Integer(msg.Get("to", 0))
+        destFrom := Integer(msg.Get("destFrom", 0)), destTo := Integer(msg.Get("destTo", 0))
+    }
+    if (from < 1 || to > g_events.Length || from > to)
+        return
+    if (msg.Get("dir", "") = "up" && destFrom >= 1 && destFrom < from)
+        insertAt := destFrom
+    else if (msg.Get("dir", "") = "down" && destTo > to && destTo <= g_events.Length)
+        insertAt := destTo + 1 - (to - from + 1)
+    else
+        return
+    g_events := MoveEventBlock(g_events, from, to, insertAt)
+    WriteMacroFile(g_currentFile)
+    InitTray()
+    PushMacro()
+}
+
+; Remove the dead mouse movements before the first real action and after
+; the last one (the path toward the stop button). Anchors and geometry
+; events are never actions but are kept wherever they are.
+TrimEvents(arr) {
+    isMove := (e) => (e.kind = "m" && e.msg = 0x200)
+    first := 0, last := 0
+    for i, e in arr {
+        if (!isMove(e) && e.kind != "w" && e.kind != "g") {
+            if !first
+                first := i
+            last := i
+        }
+    }
+    if !first   ; a moves-only macro (a recorded mouse path) is left intact
+        return {events: arr, removed: 0}
+    out := [], removed := 0
+    for i, e in arr {
+        if (isMove(e) && (i < first || i > last))
+            removed += 1
+        else
+            out.Push(e)
+    }
+    return {events: out, removed: removed}
+}
+
+UiTrim(*) {
+    global g_events, g_currentFile
+    if (g_currentFile = "" || g_recording || g_playing)
+        return
+    r := TrimEvents(g_events)
+    if !r.removed {
+        Notify("Encore: nothing to trim")
+        return
+    }
+    g_events := r.events
+    WriteMacroFile(g_currentFile)
+    InitTray()
+    PushMacro()
+    Notify("Trimmed " r.removed " events", 2000)
+}
+
+; ── Task Scheduler integration ──────────────────────────────────────────
+; Creates user-level scheduled tasks that run the CLI play mode:
+;   "<interpreter>" "<Encore.ahk>" "<macro name>"
+; Grouped under an "Encore" folder in the Task Scheduler.
+TaskName(name) {
+    return "Encore\" name
+}
+
+RunnerCmd(name) {
+    ahk := EnvGet("LOCALAPPDATA") "\Microsoft\WindowsApps\AutoHotkeyV2.exe"
+    if !FileExist(ahk)   ; the alias is short (schtasks /TR max 261 chars)
+        ahk := A_AhkPath
+    return '\"' ahk '\" \"' A_ScriptFullPath '\" \"' name '\"'
+}
+
+; Run a console command and hand back its output. The code page is FORCED to UTF-8
+; rather than guessed: a redirected console writes in the OEM page (850 here) while
+; FileRead without an encoding decodes with the ANSI one (1252), so a macro named
+; "Sköldkörtelprov" came back mangled — and that string is not merely displayed, it
+; is what the schedule list matches against the macro files and sends back to
+; schtasks /Delete. Mangled meant a real schedule shown as an orphan whose ✕ then
+; failed. "chcp 65001>nul &" costs nothing and removes the guesswork.
+CaptureCmd(cmd) {
+    tmp := A_Temp "\encore_schtask.txt"
+    try FileDelete(tmp)
+    code := 1
+    try code := RunWait(A_ComSpec ' /c chcp 65001>nul & ' cmd ' > "' tmp '" 2>&1', , "Hide")
+    out := ""
+    try out := FileRead(tmp, "UTF-8")
+    return {code: code, out: Trim(out, " `t`r`n")}
+}
+
+CurrentMacroName() {
+    global g_currentFile
+    return g_currentFile != ""
+        ? SubStr(SubStr(g_currentFile, InStr(g_currentFile, "\", , -1) + 1), 1, -6) : ""
+}
+
+; Everything Encore has ever scheduled, whether or not the macro behind it still
+; exists. Renaming or deleting a macro used to leave its task behind, firing on a
+; macro that was gone — invisible from the app, because the dialog only ever knew
+; about the selected one. The list is how you find and clear those.
+ListTasks() {
+    global g_macroDir
+    out := []
+    r := CaptureCmd('schtasks /Query /FO CSV /NH')
+    if (r.code != 0)
+        return out
+    pre := TaskName("")            ; "Encore\"
+    for line in StrSplit(r.out, "`n", "`r") {
+        if !RegExMatch(line, '^"\\\Q' pre '\E([^"]+)","([^"]*)","([^"]*)"$', &m)
+            continue
+        out.Push(Map("name", m[1], "next", m[2], "status", m[3]
+                   , "orphan", FileExist(g_macroDir "\" m[1] ".macro") ? 0 : 1))
+    }
+    return out
+}
+
+UiQueryTask() {
+    global g_macroDir
+    name := CurrentMacroName()
+    info := "", exists := 0
+    if (name != "") {
+        r := CaptureCmd('schtasks /Query /TN "' TaskName(name) '" /FO LIST')
+        exists := r.code = 0 ? 1 : 0
+        info   := SubStr(r.out, 1, 500)
+    }
+    UiSend("window.receiveTask(" JSON.Dump(Map("exists", exists, "info", info
+        , "all", ListTasks())) ")")
+}
+
+; Remove any Encore schedule by name — the dialog's list uses this, so a task
+; whose macro is long gone can still be cleared.
+UiRemoveTaskNamed(name) {
+    name := Trim(name)
+    if (name = "" || InStr(name, '"'))   ; the name goes on a command line
+        return
+    r := CaptureCmd('schtasks /Delete /F /TN "' TaskName(name) '"')
+    Notify(r.code = 0 ? "Schedule removed: " name : "Encore: could not remove that schedule", 2000)
+    UiQueryTask()
+}
+
+; Carry a schedule over to a renamed macro. schtasks cannot rename, so the task is
+; exported, its macro argument repointed and re-created under the new name — and
+; the old one is only deleted once the new one exists.
+MoveTask(oldName, newName) {
+    tmp := A_Temp "\encore_task.xml"
+    try FileDelete(tmp)
+    code := 1
+    try code := RunWait(A_ComSpec ' /c chcp 65001>nul & schtasks /Query /TN "' TaskName(oldName) '" /XML ONE > "' tmp '" 2>&1', , "Hide")
+    if (code != 0) {
+        try FileDelete(tmp)
+        return false               ; nothing scheduled for this macro
+    }
+    xml := ""
+    ; cmd redirects the console output as 8-bit text even though the XML declares
+    ; UTF-16, so read it as UTF-8 and write it back as what it claims to be.
+    try xml := FileRead(tmp, "UTF-8")
+    try FileDelete(tmp)
+    if (xml = "" || !InStr(xml, '"' oldName '"'))
+        return false
+    xml := StrReplace(xml, '"' oldName '"', '"' newName '"')
+    try FileAppend(xml, tmp, "UTF-16")
+    c := CaptureCmd('schtasks /Create /F /TN "' TaskName(newName) '" /XML "' tmp '"')
+    try FileDelete(tmp)
+    if (c.code != 0)
+        return false               ; keep the old task rather than lose the schedule
+    CaptureCmd('schtasks /Delete /F /TN "' TaskName(oldName) '"')
+    return true
+}
+
+UiScheduleTask(msg) {
+    name := CurrentMacroName()
+    if (name = "")
+        return
+    freq := msg.Get("freq", "DAILY")
+    if (freq != "DAILY" && freq != "WEEKLY" && freq != "ONCE")
+        freq := "DAILY"
+    time := Trim(msg.Get("time", ""))
+    if !RegExMatch(time, "^\d{2}:\d{2}$")
+        time := "08:00"
+    sc := ' /SC ' freq ' /ST ' time
+    if (freq = "WEEKLY") {
+        day := msg.Get("day", "MON")
+        if !RegExMatch(day, "^(MON|TUE|WED|THU|FRI|SAT|SUN)$")
+            day := "MON"
+        sc .= ' /D ' day
+    }
+    if (freq = "ONCE") {
+        date := Trim(msg.Get("date", ""))
+        ; Digits and separators only. Frequency, time and weekday above are all
+        ; whitelisted; the date is a free-text field in the UI, so without this it
+        ; would be the one way to push extra arguments into the schtasks command
+        ; line. Reject rather than silently schedule for the wrong day.
+        if (date != "" && !RegExMatch(date, "^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$")) {
+            Notify("Encore: date must look like yyyy-mm-dd", 2500)
+            return
+        }
+        if (date != "")
+            sc .= ' /SD ' date
+    }
+    r := CaptureCmd('schtasks /Create /F /TN "' TaskName(name) '" /TR "' RunnerCmd(name) '"' sc)
+    Notify(r.code = 0 ? "Scheduled: " name : "Encore: scheduling failed — " SubStr(r.out, 1, 120), 2500)
+    UiQueryTask()
+}
+
+UiRemoveTask() {
+    name := CurrentMacroName()
+    if (name = "")
+        return
+    r := CaptureCmd('schtasks /Delete /F /TN "' TaskName(name) '"')
+    Notify(r.code = 0 ? "Schedule removed" : "Encore: no schedule to remove", 2000)
+    UiQueryTask()
 }
 
 UiSaveMacroProps(msg) {
@@ -1858,7 +2320,19 @@ BuildStandalone() {
             ev .= '    {k:"s", t:' rt ', keys:"' _QEsc(e.keys) '"},`n'
         else if (e.kind = "d")
             ev .= '    {k:"d", t:' rt ', ms:' e.ms '},`n'
+        else if (e.kind = "ww")
+            ev .= '    {k:"ww", t:' rt ', exe:"' _QEsc(e.exe) '", title:"' _QEsc(e.title)
+                . '", ms:' e.ms ', active:' e.active '},`n'
+        else if (e.kind = "v")
+            ev .= '    {k:"v", t:' rt ', col:' e.col '},`n'
     }
+    rowsSrc := ""
+    ; Only bake in the list when the macro actually consumes it: the exported script
+    ; does "if rows.Length -> reps := rows.Length", so a stale .data file left beside
+    ; a macro with no {value} step would silently override the repeat count.
+    if MacroHasValueStep()
+        for row in LoadDataRows()
+            rowsSrc .= '    "' _QEsc(row) '",`n'
     tpl := "
 (LTrim0
 ; %NAME% - exported from Encore %DATE%. Run to play back; Esc aborts.
@@ -1876,6 +2350,11 @@ maxWait := %MAXWAIT%
 
 ev := [
 %EVENTS%]
+
+rows := [
+%ROWS%]
+if rows.Length
+    reps := rows.Length
 
 if (mode = "fixed") {
     kept := []
@@ -1898,6 +2377,7 @@ down := Map()
 rep := 0
 loop {
     rep += 1
+    row := rows.Length ? rows[rep] : ""
     prevT := ev.Length ? ev[1].t : 0
     stop := false
     for e in ev {
@@ -1913,7 +2393,7 @@ loop {
                 Sleep Min(w, maxWait)
             prevT := e.t
         }
-        Replay(e, down)
+        Replay(e, down, row)
     }
     if (stop || (reps != 0 && rep >= reps))
         break
@@ -1923,11 +2403,14 @@ for vk, sc in down
     try Send "{" Format("vk{:X}sc{:03X}", vk, sc) " up}"
 ExitApp
 
-Replay(e, held) {
+Replay(e, held, row) {
     static BD := Map(0x201, "Left", 0x204, "Right", 0x207, "Middle")
     static BU := Map(0x202, "Left", 0x205, "Right", 0x208, "Middle")
     static BDBL := Map(0x203, "Left", 0x206, "Right", 0x209, "Middle")
     switch e.k {
+        case "v":
+            parts := StrSplit(row, Chr(9))
+            SendText(parts.Length >= e.col ? parts[e.col] : row)
         case "k":
             key := Format("vk{:X}sc{:03X}", e.vk, e.sc)
             Send "{" key (e.up ? " up" : " down") "}"
@@ -2029,6 +2512,7 @@ Replay(e, held) {
     tpl := StrReplace(tpl, "%FIXED%", g_fixedDelayMs)
     tpl := StrReplace(tpl, "%MAXWAIT%", g_maxWaitMs)
     tpl := StrReplace(tpl, "%EVENTS%", ev)
+    tpl := StrReplace(tpl, "%ROWS%", rowsSrc)
     return tpl
 }
 
