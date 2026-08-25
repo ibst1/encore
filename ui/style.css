@@ -90,10 +90,12 @@ button.primary:hover { background: var(--accent2); }
 #macroBar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;          /* never push actions off the window edge */
+  gap: 6px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
+#macroBar button { padding: 4px 9px; }
 #macroName { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #macroMeta { color: var(--text-dim); }
 
@@ -118,6 +120,45 @@ button.primary:hover { background: var(--accent2); }
 }
 #propsBar select, #settingsModal select { width: auto; }
 #propsBar .hint { color: var(--text-dim); font-size: 11px; }
+
+/* ── data panel (right side) ─────────────────────────────────────────── */
+#contentBody { flex: 1; display: flex; min-height: 0; }
+#dataPanel {
+  width: 280px;
+  min-width: 200px;
+  border-left: 1px solid var(--border);
+  background: var(--bg2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+#dataPanel[hidden] { display: none; }
+#dataPanel .data-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: .5px;
+}
+#dataPanel .data-head button { padding: 1px 7px; }
+#dataPanel .data-hint { color: var(--text-dim); font-size: 11px; line-height: 1.5; }
+#dataPanel textarea {
+  flex: 1;
+  font: 12px Consolas, monospace;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 6px;
+  resize: none;
+  min-height: 80px;
+}
+#dataInfo { color: var(--accent2); text-transform: none; }
+#btnDataPanel.active { background: var(--accent); border-color: var(--accent2); color: #fff; }
 
 /* ── steps ───────────────────────────────────────────────────────────── */
 #stepsWrap { flex: 1; overflow-y: auto; }
@@ -175,6 +216,42 @@ button.primary:hover { background: var(--accent2); }
   min-width: 420px;
 }
 .modal-box h2 { font-size: 15px; margin-bottom: 12px; }
+
+/* The list of every Encore schedule, inside the Schedule dialog. */
+#schAllWrap { margin: 14px 0 4px; }
+.sch-all-title {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 4px;
+}
+#schAll {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  display: block;
+  max-height: 132px;        /* a long list must not push the buttons off screen */
+  overflow-y: auto;
+}
+#schAll td {
+  padding: 3px 6px 3px 0;
+  border-top: 1px solid var(--border);
+  vertical-align: middle;
+}
+#schAll td:first-child { width: 100%; word-break: break-all; }
+#schAll td:nth-child(2) { white-space: nowrap; color: var(--text-dim); }
+#schAll tr.orphan td:first-child { color: var(--warn, #d08770); }
+#schAll button {
+  font: inherit;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 6px;
+}
+#schAll button:hover { color: var(--text); border-color: var(--text-dim); }
 .modal-box .row {
   display: flex;
   align-items: center;
@@ -194,3 +271,15 @@ button.primary:hover { background: var(--accent2); }
 }
 .modal-box select { width: auto; }
 .modal-box .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+#schStatus {
+  font: 11px Consolas, monospace;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
