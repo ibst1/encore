@@ -87,7 +87,13 @@ So a plain AutoHotkey v2 hotstring that plays a macro looks like this — typing
 
 The running tray instance can also be driven without starting a process — post the registered window message `ENCORE_CMD` with wParam `2` (see *Notes*) — but that plays the *currently selected* recording, so `Run` with an explicit macro name is the reliable route from scripts.
 
-**Expanto users**: an Expanto phrase only *types text* — it cannot start a program, so an Expanto hotstring cannot launch Encore. Two good alternatives: put a hotstring like the one above in a small companion AutoHotkey script, or — simpler — give the recording a **per-recording hotkey** in Encore's own window (the *Hotkey* field, e.g. `^!1`); pressing it plays the macro from anywhere with no extra script at all.
+**Expanto users**: an [Expanto](https://github.com/ibst1/expanto) phrase can launch a macro with a `{run:...}` field — the command runs after the insert and is never typed:
+
+```
+{run:"C:\Tools\Encore\Encore.exe" "Rapportmall"}
+```
+
+Alternatively, give the recording a **per-recording hotkey** in Encore's own window (the *Hotkey* field, e.g. `^!1`); pressing it plays the macro from anywhere with no extra script at all.
 
 ## Notes
 
