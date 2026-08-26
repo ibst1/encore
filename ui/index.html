@@ -18,7 +18,7 @@
 
 <div id="main">
   <div id="sidebar">
-    <div class="side-head">Recordings <button id="btnFolder" title="Open the recordings folder">Folder</button></div>
+    <div class="side-head" title="Ctrl-click or Shift-click to select several recordings">Recordings <button id="btnFolder" title="Open the recordings folder">Folder</button></div>
     <ul id="recList"></ul>
   </div>
   <div id="content">
@@ -26,17 +26,25 @@
       <span id="macroName">–</span>
       <span id="macroMeta"></span>
       <span class="spacer"></span>
-      <button id="btnRename">Rename</button>
-      <button id="btnDelete">Delete</button>
-      <button id="btnExportAhk" title="Export as a standalone .ahk script">Export .ahk</button>
-      <button id="btnDataPanel" title="Show/hide the data list panel">Data</button>
-      <button id="btnAddStep">＋ Add step</button>
-      <button id="btnEditStep" disabled>✎ Edit step</button>
-      <button id="btnMoveUp" disabled title="Move the selected step up">↑</button>
-      <button id="btnMoveDown" disabled title="Move the selected step down">↓</button>
-      <button id="btnDelSteps" disabled title="Delete the selected steps">Delete steps</button>
-      <button id="btnTrim" title="Remove dead mouse movements at the start and end">Trim</button>
-      <button id="btnSchedule" title="Run this macro on a schedule (Task Scheduler)">Schedule…</button>
+      <button id="btnRename"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M11.3 2.7l2 2L5.5 12.5l-2.8.8.8-2.8z"/></svg>Rename</button>
+      <button id="btnExportAhk" title="Export as a standalone .ahk script"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7.5M5 7.5l3 3 3-3M3 13.5h10"/></svg>Export .ahk</button>
+      <button id="btnDataPanel" title="Show/hide the data list panel"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11M2.5 8h11M2.5 12.5h11"/></svg>Data</button>
+      <button id="btnSchedule" title="Run this macro on a schedule (Task Scheduler)"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2.2 1.3"/></svg>Schedule…</button>
+      <button id="btnCliHelp" title="How to run this macro without the window - command line, shortcuts, other scripts"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M4.5 6.2l2.2 1.8-2.2 1.8M8.5 10.5h3"/></svg>CLI</button>
+      <button id="btnDelete" class="danger" title="Delete the selected recording(s) - Ctrl/Shift-click in the list to select several"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.3 4.5V3h3.4v1.5M4.5 4.5l.6 9h5.8l.6-9"/></svg>Delete macro</button>
+    </div>
+    <!-- Step tools live on their own row: mixing "Delete steps" into the same
+         bar as the macro-level "Delete" made it too easy to erase a whole
+         recording when a step was meant. -->
+    <div id="stepBar">
+      <span class="bar-label">Steps</span>
+      <button id="btnAddStep"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add step</button>
+      <button id="btnEditStep" disabled><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M11.3 2.7l2 2L5.5 12.5l-2.8.8.8-2.8z"/></svg>Edit step</button>
+      <button id="btnMoveUp" disabled title="Move the selected step up"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3M4 7l4-4 4 4"/></svg>Move up</button>
+      <button id="btnMoveDown" disabled title="Move the selected step down"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M4 9l4 4 4-4"/></svg>Move down</button>
+      <button id="btnTrim" title="Remove dead mouse movements at the start and end"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="4" r="1.5"/><circle cx="3.5" cy="12" r="1.5"/><path d="M4.8 4.8L13 11.5M4.8 11.2L13 4.5"/></svg>Trim</button>
+      <span class="sep"></span>
+      <button id="btnDelSteps" class="danger" disabled title="Delete the selected step(s)"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.3 4.5V3h3.4v1.5M4.5 4.5l.6 9h5.8l.6-9"/></svg>Delete step</button>
     </div>
     <div id="propsBar">
       <label>This recording:</label>
@@ -77,6 +85,24 @@
         <textarea id="dataText" spellcheck="false" placeholder="(paste rows here to make playback data-driven)"></textarea>
         <button id="btnSaveData">Save data</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div id="cliModal" class="modal" hidden>
+  <div class="modal-box" style="max-width:600px">
+    <h2>Run "<span id="cliName"></span>" without the window</h2>
+    <div class="cli-sect">Command line &mdash; plays the macro and exits. Works in shortcuts, Task Scheduler and scripts, and runs fine while the tray instance is open:</div>
+    <div class="cli-cmd"><code id="cliPlayCmd"></code><button id="cliCopyPlay">Copy</button></div>
+    <div class="cli-sect">From another AutoHotkey script:</div>
+    <div class="cli-cmd"><code id="cliRunCmd"></code><button id="cliCopyRun">Copy</button></div>
+    <div class="cli-hint">Use <b>RunWait</b> instead of <b>Run</b> to block until playback finishes.
+      A <b>per-recording hotkey</b> (the Hotkey field above) plays the macro from anywhere
+      with no script at all. <b>Export .ahk</b> gives a self-contained script that plays on
+      any machine with AutoHotkey v2 &mdash; no Encore needed.</div>
+    <div class="btns">
+      <button id="cliReadme" title="Open the README section on command-line use">Open README</button>
+      <button id="cliClose" class="primary">Close</button>
     </div>
   </div>
 </div>

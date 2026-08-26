@@ -11,6 +11,9 @@ let events = [];       // raw events of the selected macro
 let truncated = false;
 let steps = [];        // grouped display steps: {icon, html, from, to, t}
 let selSteps = new Set();
+let selMacros = new Set();   // sidebar multi-selection (Ctrl/Shift-click)
+let lastRecIdx = -1;         // anchor row for Shift-click ranges
+let dragSteps = null;        // [from,to] event ranges while steps are dragged
 
 // ── vk → display label ─────────────────────────────────────────────────
 const VKNAME = {
@@ -241,21 +244,58 @@ function renderList() {
     ul.appendChild(li);
     return;
   }
-  for (const r of state.recordings) {
+  // drop selections whose recording was deleted or renamed since last render
+  selMacros = new Set(
+    [...selMacros].filter(n => state.recordings.some(r => r.name === n)));
+  state.recordings.forEach((r, i) => {
     const li = document.createElement('li');
     if (r.name === state.current) li.classList.add('selected');
+    if (selMacros.has(r.name)) li.classList.add('multisel');
     li.innerHTML = '<span class="nm"></span><span class="meta"></span>';
     li.querySelector('.nm').textContent = r.name;
     li.querySelector('.meta').textContent = r.events + ' · ' + fmtDur(r.durMs);
-    li.title = 'Double-click or right-click to rename';
-    li.addEventListener('click', () => post({ action: 'select', name: r.name }));
+    li.title = 'Double-click or right-click to rename · Ctrl/Shift-click to select several';
+    li.addEventListener('click', ev => {
+      if (ev.ctrlKey) {                    // toggle this row in the selection
+        if (selMacros.has(r.name)) selMacros.delete(r.name);
+        else selMacros.add(r.name);
+        lastRecIdx = i;
+        renderList();
+      } else if (ev.shiftKey && lastRecIdx >= 0) {   // extend from the anchor
+        const a = Math.min(lastRecIdx, i), b = Math.max(lastRecIdx, i);
+        for (let j = a; j <= b; j++) selMacros.add(state.recordings[j].name);
+        renderList();
+      } else {
+        selMacros.clear();
+        lastRecIdx = i;
+        renderList();                      // clear stale marks before AHK answers
+        post({ action: 'select', name: r.name });
+      }
+    });
+    // steps dragged from the step list can be dropped here:
+    // plain drop moves them, Ctrl+drop copies them
+    li.addEventListener('dragover', ev => {
+      if (!dragSteps || r.name === state.current) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = ev.ctrlKey ? 'copy' : 'move';
+      li.classList.add('droptarget');
+    });
+    li.addEventListener('dragleave', () => li.classList.remove('droptarget'));
+    li.addEventListener('drop', ev => {
+      li.classList.remove('droptarget');
+      if (!dragSteps || r.name === state.current) return;
+      ev.preventDefault();
+      post({ action: 'copyStepsTo', target: r.name, ranges: dragSteps,
+             move: ev.ctrlKey ? 0 : 1 });
+      dragSteps = null;
+    });
     li.addEventListener('dblclick', () => renamePrompt(r.name));
     li.addEventListener('contextmenu', ev => {
       ev.preventDefault();
       renamePrompt(r.name);
     });
     ul.appendChild(li);
-  }
+  });
 }
 
 function renderSteps() {
@@ -307,6 +347,29 @@ function renderSteps() {
       });
       tm.replaceChildren(span);
     }
+    tr.draggable = true;
+    tr.addEventListener('dragstart', ev => {
+      // dragging inside the delay-edit input must stay text selection
+      if (truncated || (ev.target && ev.target.tagName === 'INPUT')) {
+        ev.preventDefault();
+        return;
+      }
+      if (!selSteps.has(idx)) {            // dragging an unselected row selects it
+        selSteps.clear();
+        selSteps.add(idx);
+        [...body.children].forEach((row, k) => row.classList.toggle('sel', selSteps.has(k)));
+        updateDelBtn();
+      }
+      dragSteps = [...selSteps].sort((a, b) => a - b)
+        .map(j => [steps[j].from, steps[j].to]);
+      ev.dataTransfer.setData('text/plain', 'encore-steps');
+      ev.dataTransfer.effectAllowed = 'copyMove';
+    });
+    tr.addEventListener('dragend', () => {
+      dragSteps = null;
+      document.querySelectorAll('#recList li.droptarget')
+        .forEach(el => el.classList.remove('droptarget'));
+    });
     tr.addEventListener('click', ev => {
       if (!ev.ctrlKey && !ev.shiftKey) selSteps.clear();
       if (selSteps.has(idx)) selSteps.delete(idx); else selSteps.add(idx);
@@ -384,7 +447,8 @@ function renderState() {
   // actions that need a selected recording: disable rather than no-op
   const noMacro = !state.current;
   for (const id of ['btnRename', 'btnDelete', 'btnExportAhk', 'btnAddStep',
-                    'btnTrim', 'btnSchedule', 'btnSaveProps', 'btnSaveData'])
+                    'btnTrim', 'btnSchedule', 'btnSaveProps', 'btnSaveData',
+                    'btnCliHelp'])
     document.getElementById(id).disabled = noMacro;
   const p = state.macroProps || {};
   document.getElementById('pRepeat').value = p.repeat != null ? p.repeat : '';
@@ -491,9 +555,17 @@ window.addEventListener('DOMContentLoaded', () => {
     if (state && state.current) post({ action: 'exportAhk' });
   });
   $('btnDelete').addEventListener('click', () => {
-    if (!state || !state.current) return;
-    if (confirm('Delete the recording "' + state.current + '"?'))
-      post({ action: 'delete', name: state.current });
+    if (!state) return;
+    const names = selMacros.size ? [...selMacros]
+                : state.current ? [state.current] : [];
+    if (!names.length) return;
+    const q = names.length === 1
+      ? 'Delete the recording "' + names[0] + '"?'
+      : 'Delete these ' + names.length + ' recordings?\n\n' + names.join('\n');
+    if (confirm(q)) {
+      post({ action: 'deleteMany', names });
+      selMacros.clear();
+    }
   });
   $('btnDelSteps').addEventListener('click', () => {
     if (!selSteps.size) return;
@@ -536,6 +608,20 @@ window.addEventListener('DOMContentLoaded', () => {
   $('dataText').addEventListener('input', updateDataPanel);
   $('btnMoveUp').addEventListener('click', () => moveStep('up'));
   $('btnMoveDown').addEventListener('click', () => moveStep('down'));
+  $('btnCliHelp').addEventListener('click', () => {
+    if (!state || !state.current) return;
+    const base = state.cliBase || '"Encore.exe"';
+    $('cliName').textContent = state.current;
+    $('cliPlayCmd').textContent = base + ' "' + state.current + '"';
+    $('cliRunCmd').textContent = "Run '" + base + ' "' + state.current + '"' + "'";
+    $('cliModal').hidden = false;
+  });
+  $('cliCopyPlay').addEventListener('click', () =>
+    post({ action: 'copyText', text: $('cliPlayCmd').textContent }));
+  $('cliCopyRun').addEventListener('click', () =>
+    post({ action: 'copyText', text: $('cliRunCmd').textContent }));
+  $('cliReadme').addEventListener('click', () => post({ action: 'openReadme' }));
+  $('cliClose').addEventListener('click', () => { $('cliModal').hidden = true; });
   $('btnTrim').addEventListener('click', () => {
     if (state && state.current) post({ action: 'trim' });
   });

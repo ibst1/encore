@@ -18,7 +18,9 @@ A Windows macro recorder in the system tray: record what you do — keystrokes, 
 - **Window-relative playback**: set *Coords: window-relative* on a recording and its mouse actions replay relative to the anchored window's current position — the macro works even when the window has moved.
 - **Progress overlay and countdown**: playback shows a small "▶ name — 123/456 · rep 1/3 — Esc aborts" overlay, and starts after a configurable countdown (default 1 s) so you can settle focus. Both in Settings.
 - **Wait-for-window steps**: add a step that waits (with timeout) until a window with a given title/program exists or is active — robust macros against slow applications.
-- **Reorder and trim**: move a selected step up/down with the ↑/↓ buttons (its pause travels with it and the timeline is rebuilt), and *Trim* removes the dead mouse movements before the first and after the last real action — typically the path toward the stop button.
+- **Reorder and trim**: move a selected step up/down with the *Move up*/*Move down* buttons (its pause travels with it and the timeline is rebuilt), and *Trim* removes the dead mouse movements before the first and after the last real action — typically the path toward the stop button.
+- **Drag steps to another macro**: select steps and drag them onto another recording in the list — dropping **moves** them, **Ctrl+drop copies**. The block keeps its internal timing and is appended after the target's last event. (If the two macros use different coordinate modes, mouse positions may need adjusting — the confirmation says so.)
+- **Multi-select recordings**: Ctrl-click or Shift-click in the recordings list to select several, then *Delete macro* removes them all in one confirmed sweep.
 - **Schedule macros**: *Schedule…* creates a Windows Task Scheduler job (grouped under an "Encore" folder) that plays the macro via the command line — daily, weekly or once, with status shown in the dialog and one-click removal. The dialog also lists **every** Encore schedule with a ✕ next to each, so you can remove any of them without hunting through Task Scheduler; a schedule whose macro no longer exists is highlighted. Renaming a macro carries its schedule along, and deleting a macro removes it.
 - **Editable delays**: the time column shows the pause before each step — click it, type a new value in milliseconds and press Enter. All later timestamps shift along, so the step's internal timing is untouched. (Hover shows the cumulative time.)
 - **Edit and add steps**: a "Type …" step can be edited — its raw keystrokes are replaced by a text event played back with SendText, so you can change what a macro types without re-recording. New steps can be inserted anywhere: typed text, an explicit pause, raw keys in AutoHotkey Send syntax (e.g. `^s` or `{Enter}`), or a program switch. These appear in the macro file as `t`/`d`/`s`/`w` lines and can be hand-edited too.
@@ -58,8 +60,34 @@ A Windows macro recorder in the system tray: record what you do — keystrokes, 
 
 ## Command line and standalone use
 
-- `Encore.exe MyMacro` (a name in `macros\`, or any path to a `.macro` file) plays that macro and exits — for Task Scheduler, desktop shortcuts or other scripts. A CLI run coexists with the tray instance.
+The window's **CLI** button shows all of this as ready-to-copy commands for the selected recording.
+
+- `Encore.exe MyMacro` (a name in `macros\`, or any path to a `.macro` file) plays that macro and exits — for Task Scheduler, desktop shortcuts or other scripts. A CLI run coexists with the tray instance. Running the script install instead of the portable exe, give the interpreter the script and the macro: `AutoHotkey64.exe Encore.ahk MyMacro`.
 - `Encore.exe --export MyMacro out.ahk` exports the macro as a **standalone AutoHotkey script**: the events plus a minimal embedded player, playable on any machine with AutoHotkey v2 and no Encore at all (Esc aborts; repeat/speed/mode are baked in at export time). Also available interactively: *Export .ahk* in the window, or tray → Recordings → *Export as standalone script…*.
+
+### Calling a macro from another AutoHotkey script
+
+Play a macro by name — `Run` is fire-and-forget, `RunWait` blocks until playback finishes:
+
+```ahk
+; portable exe install
+Run '"C:\Tools\Encore\Encore.exe" "MyMacro"'
+
+; script install — reuse the interpreter that runs your own script
+RunWait '"' A_AhkPath '" "C:\Tools\Encore\Encore.ahk" "MyMacro"'
+```
+
+So a plain AutoHotkey v2 hotstring that plays a macro looks like this — typing `.rapport` anywhere fires it:
+
+```ahk
+::.rapport:: {
+    Run '"C:\Tools\Encore\Encore.exe" "Rapportmall"'
+}
+```
+
+The running tray instance can also be driven without starting a process — post the registered window message `ENCORE_CMD` with wParam `2` (see *Notes*) — but that plays the *currently selected* recording, so `Run` with an explicit macro name is the reliable route from scripts.
+
+**Expanto users**: an Expanto phrase only *types text* — it cannot start a program, so an Expanto hotstring cannot launch Encore. Two good alternatives: put a hotstring like the one above in a small companion AutoHotkey script, or — simpler — give the recording a **per-recording hotkey** in Encore's own window (the *Hotkey* field, e.g. `^!1`); pressing it plays the macro from anywhere with no extra script at all.
 
 ## Notes
 

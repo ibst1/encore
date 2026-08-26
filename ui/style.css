@@ -81,7 +81,10 @@ button.primary:hover { background: var(--accent2); }
   align-items: baseline;
 }
 #recList li:hover { background: var(--bg3); }
+#recList li { user-select: none; }   /* shift-click selects rows, not text */
 #recList li.selected { background: var(--bg3); border-left-color: var(--accent2); }
+#recList li.multisel { background: var(--bg3); border-left-color: var(--accent); }
+#recList li.droptarget { background: var(--bg3); border-left-color: var(--green); }
 #recList li .meta { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
 #recList li .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #recList .empty { color: var(--text-dim); font-style: italic; cursor: default; }
@@ -96,6 +99,49 @@ button.primary:hover { background: var(--accent2); }
   border-bottom: 1px solid var(--border);
 }
 #macroBar button { padding: 4px 9px; }
+#macroBar button, #stepBar button { display: inline-flex; align-items: center; gap: 5px; }
+button .ic {
+  width: 13px; height: 13px; flex: none;
+  stroke: currentColor; fill: none;
+  stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
+}
+/* destructive actions turn red on hover so they read as such before the click */
+button.danger:not(:disabled):hover { background: var(--red); border-color: #f05050; color: #fff; }
+
+#stepBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+#stepBar button { padding: 3px 9px; }
+#stepBar .bar-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-right: 2px;
+}
+#stepBar .sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 3px; }
+
+/* ── CLI modal ───────────────────────────────────────────────────────── */
+.cli-sect { color: var(--text-dim); font-size: 12px; margin: 12px 0 4px; }
+.cli-cmd { display: flex; gap: 6px; align-items: center; }
+.cli-cmd code {
+  flex: 1;
+  font: 12px Consolas, monospace;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  user-select: all;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.cli-cmd button { padding: 3px 9px; }
+.cli-hint { color: var(--text-dim); font-size: 12px; margin-top: 10px; line-height: 1.55; }
 #macroName { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #macroMeta { color: var(--text-dim); }
 

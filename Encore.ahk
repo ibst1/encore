@@ -1,4 +1,4 @@
-﻿; Encore — v1.5.0 (2026-08-25)
+﻿; Encore — v1.6.0 (2026-08-26)
 ;
 ; Records keyboard and mouse activity (keys, clicks, movements, wheel) and
 ; plays it back — at the original speed (adjustable factor) or with a fixed
@@ -1558,6 +1558,12 @@ UiMessage(sender, args) {
             SelectMacro(g_macroDir "\" msg["name"] ".macro")
         case "rename": UiRename(msg["name"], msg["newName"])
         case "delete": UiDelete(msg["name"])
+        case "deleteMany": UiDeleteMany(msg["names"])
+        case "copyStepsTo": UiCopyStepsTo(msg)
+        case "copyText":
+            A_Clipboard := msg.Get("text", "")
+            Notify("Copied to the clipboard", 1200)
+        case "openReadme": Run("https://github.com/ibst1/encore#command-line-and-standalone-use")
         case "deleteEvents": UiDeleteEvents(msg["ranges"])
         case "setStep": UiSetStep(msg)
         case "insertStep": UiInsertStep(msg)
@@ -1601,7 +1607,7 @@ PushState() {
         try dataText := FileRead(df, "UTF-8")
     st := Map("recordings", list, "current", cur, "dataText", dataText
         , "recording", g_recording ? 1 : 0, "playing", g_playing ? 1 : 0
-        , "macroProps", props
+        , "macroProps", props, "cliBase", CliBase()
         , "settings", Map("recordKey", g_recordKey, "playKey", g_playKey
             , "mode", g_mode, "speed", g_speed, "fixedDelayMs", g_fixedDelayMs
             , "repeat", g_repeat, "repeatPauseMs", g_repeatPauseMs
@@ -1775,6 +1781,38 @@ UiDelete(name) {
     InitTray()
 }
 
+; Delete several recordings in one sweep — the current macro is re-resolved
+; and the UI refreshed once at the end instead of per file.
+UiDeleteMany(names) {
+    global g_recording, g_playing, g_macroDir, g_currentFile, g_events, g_curProps
+    if (g_recording || g_playing)
+        return
+    lostCurrent := false
+    for name in names {
+        p := g_macroDir "\" name ".macro"
+        try FileDelete(p)
+        try FileDelete(DataFileFor(p))
+        ; A deleted macro must not leave a task behind that fires on nothing.
+        ; Bind() snapshots the command string — a fat-arrow closure here would
+        ; capture the loop variable and every timer would fire with the last name.
+        SetTimer(CaptureCmd.Bind('schtasks /Delete /F /TN "' TaskName(name) '"'), -1)
+        if (g_currentFile = p)
+            lostCurrent := true
+    }
+    if lostCurrent {
+        g_currentFile := ""
+        g_events := []
+        g_curProps := Map()
+        macros := ListMacros()
+        if macros.Length {
+            g_currentFile := macros[1].p
+            LoadMacroFile(g_currentFile)
+        }
+        PushMacro()
+    }
+    InitTray()
+}
+
 ; Delete the raw events behind the display steps the user selected —
 ; ranges are 1-based inclusive [from, to] pairs into the event array.
 UiDeleteEvents(ranges) {
@@ -1797,6 +1835,73 @@ UiDeleteEvents(ranges) {
     WriteMacroFile(g_currentFile)
     InitTray()
     PushMacro()
+}
+
+; Append the events in `ranges` (from the current macro) to another macro's
+; file — drag & drop in the UI. move=1 also removes them from the source.
+; The block keeps its internal spacing and lands 500 ms after the target's
+; last event, so the target's own timing is untouched.
+UiCopyStepsTo(msg) {
+    global g_events, g_curProps, g_currentFile, g_macroDir, g_recording, g_playing
+    if (g_currentFile = "" || g_recording || g_playing)
+        return
+    target := msg.Get("target", "")
+    ranges := msg.Get("ranges", "")
+    doMove := msg.Get("move", 0) ? true : false
+    tp := g_macroDir "\" target ".macro"
+    if (target = "" || !(ranges is Array) || !ranges.Length
+        || !FileExist(tp) || tp = g_currentFile)
+        return
+    picked := []
+    for idx, e in g_events {
+        for r in ranges {
+            if (idx >= r[1] && idx <= r[2]) {
+                picked.Push(e)
+                break
+            }
+        }
+    }
+    if !picked.Length
+        return
+    ; borrow the ordinary loader for the target, then restore the globals
+    srcEvents := g_events, srcProps := g_curProps, srcFile := g_currentFile
+    g_events := []
+    LoadMacroFile(tp)
+    tgtEvents := g_events, tgtProps := g_curProps
+    base := tgtEvents.Length ? tgtEvents[tgtEvents.Length].t + 500 : 0
+    first := picked[1].t
+    hasMouse := false
+    for e in picked {
+        c := e.Clone()
+        c.t := base + (e.t - first)
+        tgtEvents.Push(c)
+        if (c.kind = "m")
+            hasMouse := true
+    }
+    ; mouse steps recorded in one coordinate mode land differently in the other
+    coordWarn := hasMouse
+        && srcProps.Get("coords", "") != tgtProps.Get("coords", "")
+    g_events := tgtEvents, g_curProps := tgtProps
+    WriteMacroFile(tp)
+    g_events := srcEvents, g_curProps := srcProps, g_currentFile := srcFile
+    if doMove
+        UiDeleteEvents(ranges)   ; rewrites the source file and refreshes the UI
+    else {
+        InitTray()
+        PushMacro()
+    }
+    n := picked.Length
+    Notify((doMove ? "Moved " : "Copied ") n " event" (n > 1 ? "s" : "")
+        . " to `"" target "`""
+        . (coordWarn ? "`nNote: the two macros use different coordinate modes - check the mouse positions."
+                     : ""), coordWarn ? 4000 : 2000)
+}
+
+; The exact command-line prefix that plays a macro from outside the UI —
+; compiled: the exe alone; script install: interpreter + script path.
+CliBase() {
+    return A_IsCompiled ? '"' A_ScriptFullPath '"'
+         : '"' A_AhkPath '" "' A_ScriptFullPath '"'
 }
 
 ; Build a single event from a step spec sent by the UI. type: "text",
