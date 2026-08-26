@@ -85,7 +85,14 @@ function groupEvents() {
 
   while (i < n) {
     const e = events[i];
-    if (e.kind === 'w') {
+    if (e.kind === 'ls') {
+      push('⟳', '<b>Repeat</b> — block start', i, i);
+      i++;
+    } else if (e.kind === 'le') {
+      push('⟳', '<b>Repeat</b> — block end, plays <b>×' + e.count + '</b>', i, i)
+        .edit = { type: 'repeat', count: e.count, at: i + 1 };
+      i++;
+    } else if (e.kind === 'w') {
       push('⇆', 'Switch to <b>' + esc(e.exe || e.title) + '</b>'
         + (e.title ? ' <span class="txt">' + esc(e.title) + '</span>' : ''), i, i)
         .edit = { type: 'switch', exe: e.exe, title: e.title };
@@ -430,6 +437,7 @@ function renderSteps() {
 
 function updateDelBtn() {
   document.getElementById('btnDelSteps').disabled = !selSteps.size || truncated;
+  document.getElementById('btnRepeat').disabled = !selSteps.size || truncated;
   const oneIdx = selSteps.size === 1 ? [...selSteps][0] : -1;
   const one = oneIdx >= 0 ? steps[oneIdx] : null;
   document.getElementById('btnEditStep').disabled = truncated || !(one && one.edit);
@@ -632,6 +640,13 @@ window.addEventListener('DOMContentLoaded', () => {
     if (selSteps.size !== 1) return;
     const s = steps[[...selSteps][0]];
     if (!s.edit) return;
+    if (s.edit.type === 'repeat') {
+      const v = prompt('Play the repeat block how many times?', s.edit.count);
+      const c = parseInt(v, 10);
+      if (!isNaN(c) && c >= 1)
+        post({ action: 'setRepeatCount', at: s.edit.at, count: c });
+      return;
+    }
     showStepModal({ mode: 'edit', from: s.from, to: s.to }, s.edit);
   });
   $('stType').addEventListener('change', applyStepType);
@@ -656,6 +671,18 @@ window.addEventListener('DOMContentLoaded', () => {
     toggleDataPanel($('dataPanel').hidden));
   $('btnDataClose').addEventListener('click', () => toggleDataPanel(false));
   $('dataText').addEventListener('input', updateDataPanel);
+  $('btnRepeat').addEventListener('click', () => {
+    if (!selSteps.size || truncated) return;
+    const sel = [...selSteps].sort((a, b) => a - b);
+    const a = sel[0], b = sel[sel.length - 1];
+    if (b - a + 1 !== sel.length) { alert('Select a contiguous block of steps.'); return; }
+    const v = prompt('Play the selected step' + (sel.length > 1 ? 's' : '')
+      + ' how many times?', '2');
+    const c = parseInt(v, 10);
+    if (isNaN(c) || c < 2) return;
+    restoreStepSel = [a, b + 2];   // markers add one step on each side
+    post({ action: 'repeatSteps', from: steps[a].from, to: steps[b].to, count: c });
+  });
   $('btnMoveUp').addEventListener('click', () => moveStep('up'));
   $('btnMoveDown').addEventListener('click', () => moveStep('down'));
   $('btnCliHelp').addEventListener('click', () => {

@@ -80,6 +80,18 @@ global g_playRow       := ""   ; current data row during data-driven playback
 ; <macro> is a path, or a name (with or without .macro) in macros\.
 ; A CLI run coexists with the tray instance; a plain (tray) start replaces
 ; any previous tray instance, like #SingleInstance Force used to.
+; Per-monitor-DPI v2: utan detta låses skalan vid processtart, och när en
+; skärm med annan skala kopplas in/ur bitmap-sträcks fönstret - fel skärpa
+; och WebView2-klick som hamnar bredvid pekaren. Måste sättas före första
+; fönstret. WM_DPICHANGED tar systemets föreslagna rect; Size-eventet
+; (Fill) storleksändrar sedan WebView2-ytan.
+; OBS: process-nivån är LÅST av AutoHotkeys manifest (SYSTEM_AWARE) -
+; SetProcessDpiAwarenessContext ger ACCESS_DENIED. Trådnivån går dock att
+; ändra, och fönster ärver trådens kontext när de skapas. AHK kör allt på
+; en enda OS-tråd, så ett anrop här täcker alla fönster skriptet skapar.
+DllCall("SetThreadDpiAwarenessContext", "ptr", -4)
+OnMessage(0x02E0, _WmDpiChanged)
+
 global g_cliMode := A_Args.Length > 0
 
 OnError(LogError)
@@ -754,7 +766,11 @@ Play(*) {
             if dataRows.Length
                 g_playRow := dataRows[rep]
             prevT := list.Length ? list[1].t : 0
-            for e in list {
+            loopStack := []   ; ⟳-block: {startIdx, kvar}
+            li := 0
+            while (li < list.Length) {
+                li += 1
+                e := list[li]
                 if (stopped := (g_stopPlay || GetKeyState("Escape", "P")))
                     break
                 evIdx += 1
@@ -806,6 +822,23 @@ Play(*) {
                         break
                     }
                     SendText(dv.value)
+                } else if (e.kind = "ls") {
+                    loopStack.Push({startIdx: li, kvar: 0})
+                } else if (e.kind = "le") {
+                    ; hör till närmaste ls; en ensam le ignoreras
+                    if loopStack.Length {
+                        top := loopStack[loopStack.Length]
+                        if (top.kvar = 0)
+                            top.kvar := e.count
+                        if (top.kvar > 1) {
+                            top.kvar -= 1
+                            li := top.startIdx
+                            ; pacing: nästa varv tidsätts relativt ls-eventet,
+                            ; annars blir alla väntetider i blocket negativa
+                            prevT := list[top.startIdx].t
+                        } else
+                            loopStack.Pop()
+                    }
                 } else {
                     ReplayMouse(e, downBtns)
                 }
@@ -1049,6 +1082,10 @@ WriteMacroFile(path) {
             out .= "ww`t" e.t "`t" e.exe "`t" e.title "`t" e.ms "`t" e.active "`n"
         else if (e.kind = "v")
             out .= "v`t" e.t "`t" e.col "`n"
+        else if (e.kind = "ls")
+            out .= "ls`t" e.t "`n"
+        else if (e.kind = "le")
+            out .= "le`t" e.t "`t" e.count "`n"
         else
             out .= "m`t" e.t "`t" e.msg "`t" e.x "`t" e.y "`t" e.data
                 . (e.HasOwnProp("wx") ? "`t" e.wx "`t" e.wy : "") "`n"
@@ -1131,6 +1168,10 @@ LoadMacroFile(path) {
                     , ms: Integer(f[5]), active: f[6] = "1" ? 1 : 0})
             else if (f.Length >= 3 && f[1] = "v")
                 g_events.Push({t: Integer(f[2]), kind: "v", col: Integer(f[3])})
+            else if (f.Length >= 2 && f[1] = "ls")
+                g_events.Push({t: Integer(f[2]), kind: "ls"})
+            else if (f.Length >= 3 && f[1] = "le")
+                g_events.Push({t: Integer(f[2]), kind: "le", count: Integer(f[3])})
         }
     }
 }
@@ -1571,6 +1612,8 @@ UiMessage(sender, args) {
         case "saveData": UiSaveData(msg)
         case "moveEvents": UiMoveEvents(msg)
         case "trim": UiTrim()
+        case "repeatSteps": UiRepeatSteps(msg)
+        case "setRepeatCount": UiSetRepeatCount(msg)
         case "queryTask": SetTimer(UiQueryTask, -1)         ; schtasks calls block briefly
         case "removeTaskNamed": SetTimer(UiRemoveTaskNamed.Bind(msg.Get("name", "")), -1)
         case "scheduleTask": SetTimer(() => UiScheduleTask(msg), -1)
@@ -1642,6 +1685,10 @@ PushMacro() {
                 , "ms", e.ms, "active", e.active))
         else if (e.kind = "v")
             arr.Push(Map("kind", "v", "t", e.t, "col", e.col))
+        else if (e.kind = "ls")
+            arr.Push(Map("kind", "ls", "t", e.t))
+        else if (e.kind = "le")
+            arr.Push(Map("kind", "le", "t", e.t, "count", e.count))
         else
             arr.Push(Map("kind", "m", "t", e.t, "msg", e.msg, "x", e.x, "y", e.y, "data", e.data))
     }
@@ -1895,6 +1942,52 @@ UiCopyStepsTo(msg) {
         . " to `"" target "`""
         . (coordWarn ? "`nNote: the two macros use different coordinate modes - check the mouse positions."
                      : ""), coordWarn ? 4000 : 2000)
+}
+
+; Wrap the event range in repeat markers: ls before, le(count) after. The
+; markers take their neighbours' timestamps so the timeline is untouched.
+UiRepeatSteps(msg) {
+    global g_events, g_currentFile, g_recording, g_playing
+    if (g_currentFile = "" || g_recording || g_playing)
+        return
+    from := 0, to := 0, count := 0
+    try {
+        from := Integer(msg.Get("from", 0)), to := Integer(msg.Get("to", 0))
+        count := Integer(msg.Get("count", 0))
+    }
+    if (from < 1 || to > g_events.Length || from > to || count < 2)
+        return
+    g_events.InsertAt(to + 1, {t: g_events[to].t, kind: "le", count: count})
+    g_events.InsertAt(from, {t: g_events[from].t, kind: "ls"})
+    WriteMacroFile(g_currentFile)
+    InitTray()
+    PushMacro()
+}
+
+UiSetRepeatCount(msg) {
+    global g_events, g_currentFile, g_recording, g_playing
+    if (g_currentFile = "" || g_recording || g_playing)
+        return
+    at := 0, count := 0
+    try {
+        at := Integer(msg.Get("at", 0)), count := Integer(msg.Get("count", 0))
+    }
+    if (at < 1 || at > g_events.Length || g_events[at].kind != "le" || count < 1)
+        return
+    g_events[at].count := count
+    WriteMacroFile(g_currentFile)
+    InitTray()
+    PushMacro()
+}
+
+_WmDpiChanged(wParam, lParam, msg, hwnd) {
+    global g_uiCtrl
+    x := NumGet(lParam, 0, "int"), y := NumGet(lParam, 4, "int")
+    r := NumGet(lParam, 8, "int"), b := NumGet(lParam, 12, "int")
+    DllCall("SetWindowPos", "ptr", hwnd, "ptr", 0, "int", x, "int", y
+        , "int", r - x, "int", b - y, "uint", 0x0214)   ; NOZORDER|NOACTIVATE|FRAMECHANGED
+    try SetTimer(() => (g_uiCtrl ? g_uiCtrl.Fill() : 0), -80)   ; hangslen: fyll om WebView2-ytan
+    return 0
 }
 
 ; The exact command-line prefix that plays a macro from outside the UI —
