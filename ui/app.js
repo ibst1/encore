@@ -14,6 +14,8 @@ let selSteps = new Set();
 let selMacros = new Set();   // sidebar multi-selection (Ctrl/Shift-click)
 let lastRecIdx = -1;         // anchor row for Shift-click ranges
 let dragSteps = null;        // [from,to] event ranges while steps are dragged
+let dragStepIdxs = null;     // selected step indices while dragging (for in-macro reorder)
+let restoreStepSel = null;   // [first,last] step range to re-select after re-render
 
 // ── vk → display label ─────────────────────────────────────────────────
 const VKNAME = {
@@ -301,6 +303,14 @@ function renderList() {
 function renderSteps() {
   groupEvents();
   selSteps.clear();
+  // a just-completed move re-selects the moved block, so Move up/down and
+  // drag-reorder can be repeated without re-clicking the step
+  if (restoreStepSel) {
+    const [a, b] = restoreStepSel;
+    restoreStepSel = null;
+    for (let i = Math.max(0, a); i <= Math.min(b, steps.length - 1); i++)
+      selSteps.add(i);
+  }
   updateDelBtn();
   const body = document.getElementById('stepsBody');
   body.innerHTML = '';
@@ -313,6 +323,7 @@ function renderSteps() {
     // event and this step's first event; click the cell to change it
     const gap = idx === 0 ? 0 : s.t - events[steps[idx - 1].to - 1].t;
     const tr = document.createElement('tr');
+    if (selSteps.has(idx)) tr.classList.add('sel');
     tr.innerHTML = '<td class="n">' + (idx + 1) + '</td><td class="ic">' + s.icon
       + '</td><td class="lb">' + s.html + '</td><td class="tm"></td>';
     const tm = tr.querySelector('.tm');
@@ -360,15 +371,52 @@ function renderSteps() {
         [...body.children].forEach((row, k) => row.classList.toggle('sel', selSteps.has(k)));
         updateDelBtn();
       }
-      dragSteps = [...selSteps].sort((a, b) => a - b)
-        .map(j => [steps[j].from, steps[j].to]);
+      dragStepIdxs = [...selSteps].sort((a, b) => a - b);
+      dragSteps = dragStepIdxs.map(j => [steps[j].from, steps[j].to]);
       ev.dataTransfer.setData('text/plain', 'encore-steps');
       ev.dataTransfer.effectAllowed = 'copyMove';
     });
     tr.addEventListener('dragend', () => {
       dragSteps = null;
+      dragStepIdxs = null;
       document.querySelectorAll('#recList li.droptarget')
         .forEach(el => el.classList.remove('droptarget'));
+      document.querySelectorAll('#stepsBody tr.droprow-above, #stepsBody tr.droprow-below')
+        .forEach(el => el.classList.remove('droprow-above', 'droprow-below'));
+    });
+    // In-macro reorder: drop a contiguous selection on another row to move
+    // the block before (dropping above it) or after it (dropping below).
+    tr.addEventListener('dragover', ev => {
+      if (!dragStepIdxs || truncated) return;
+      const a = dragStepIdxs[0], b = dragStepIdxs[dragStepIdxs.length - 1];
+      if (b - a + 1 !== dragStepIdxs.length) return;   // non-contiguous: no reorder
+      if (idx >= a && idx <= b) return;                // over the block itself
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+      tr.classList.toggle('droprow-above', idx < a);
+      tr.classList.toggle('droprow-below', idx > b);
+    });
+    tr.addEventListener('dragleave', () =>
+      tr.classList.remove('droprow-above', 'droprow-below'));
+    tr.addEventListener('drop', ev => {
+      tr.classList.remove('droprow-above', 'droprow-below');
+      if (!dragStepIdxs || truncated) return;
+      const a = dragStepIdxs[0], b = dragStepIdxs[dragStepIdxs.length - 1];
+      if (b - a + 1 !== dragStepIdxs.length || (idx >= a && idx <= b)) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const n = b - a + 1;
+      if (idx < a) {
+        restoreStepSel = [idx, idx + n - 1];
+        post({ action: 'moveEvents', from: steps[a].from, to: steps[b].to,
+               destFrom: steps[idx].from, destTo: steps[idx].to, dir: 'up' });
+      } else {
+        restoreStepSel = [idx - n + 1, idx];
+        post({ action: 'moveEvents', from: steps[a].from, to: steps[b].to,
+               destFrom: steps[idx].from, destTo: steps[idx].to, dir: 'down' });
+      }
+      dragSteps = null;
+      dragStepIdxs = null;
     });
     tr.addEventListener('click', ev => {
       if (!ev.ctrlKey && !ev.shiftKey) selSteps.clear();
@@ -396,6 +444,8 @@ function moveStep(dir) {
   const s = steps[idx];
   const dest = steps[idx + (dir === 'up' ? -1 : 1)];
   if (!dest) return;
+  const ni = idx + (dir === 'up' ? -1 : 1);
+  restoreStepSel = [ni, ni];        // keep the moved step selected
   post({ action: 'moveEvents', from: s.from, to: s.to,
     destFrom: dest.from, destTo: dest.to, dir });
 }

@@ -85,6 +85,8 @@ button.primary:hover { background: var(--accent2); }
 #recList li.selected { background: var(--bg3); border-left-color: var(--accent2); }
 #recList li.multisel { background: var(--bg3); border-left-color: var(--accent); }
 #recList li.droptarget { background: var(--bg3); border-left-color: var(--green); }
+#steps tr.droprow-above td { border-top: 2px solid var(--green); }
+#steps tr.droprow-below td { border-bottom: 2px solid var(--green); }
 #recList li .meta { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
 #recList li .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #recList .empty { color: var(--text-dim); font-style: italic; cursor: default; }

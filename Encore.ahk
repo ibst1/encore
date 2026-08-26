@@ -1899,9 +1899,19 @@ UiCopyStepsTo(msg) {
 
 ; The exact command-line prefix that plays a macro from outside the UI —
 ; compiled: the exe alone; script install: interpreter + script path.
+; Store-edition AutoHotkey runs inside an app container whose interpreter
+; path ("C:\Program Files\AutoHotkey\...") only exists INSIDE the
+; container — other processes (cmd, Task Scheduler) cannot see it. The
+; execution alias in LOCALAPPDATA is the globally visible launcher, so
+; prefer it whenever it exists.
 CliBase() {
-    return A_IsCompiled ? '"' A_ScriptFullPath '"'
-         : '"' A_AhkPath '" "' A_ScriptFullPath '"'
+    if A_IsCompiled
+        return '"' A_ScriptFullPath '"'
+    ahk := A_AhkPath
+    alias := EnvGet("LOCALAPPDATA") "\Microsoft\WindowsApps\AutoHotkeyV2.exe"
+    if FileExist(alias)
+        ahk := alias
+    return '"' ahk '" "' A_ScriptFullPath '"'
 }
 
 ; Build a single event from a step spec sent by the UI. type: "text",
