@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.6.0 (2026-08-26)
+
+- The step tools (Add/Edit step, Move up/down, Trim, Delete step) moved
+  to their own toolbar above the step list - "Delete steps" no longer
+  sits four buttons from the macro-level "Delete", which is now labeled
+  "Delete macro". Both destructive buttons turn red on hover, and all
+  toolbar buttons got icons.
+- Multi-select recordings with Ctrl/Shift-click; "Delete macro" removes
+  the whole selection after one confirmation listing the names.
+- Drag selected steps onto another recording in the list to move them
+  there (Ctrl+drop copies). The block keeps its internal timing and is
+  appended after the target's last event; a differing coordinate mode
+  is called out in the confirmation.
+- New CLI button: copy-ready commands for playing the selected macro
+  from the command line or from another AutoHotkey script, plus a link
+  to the README section - which now documents calling macros from other
+  scripts (Run/RunWait, hotstring example, ENCORE_CMD).
+
 ## 1.4.0 (2026-08-24)
 
 - Editable delays: the step list shows the pause before each step —
