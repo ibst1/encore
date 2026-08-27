@@ -783,18 +783,29 @@ window.addEventListener('DOMContentLoaded', () => {
     post({ action: 'removeTask' });
     $('schStatus').textContent = 'Removing…';
   });
-  for (const id of ['pRepeat', 'pPause', 'pSpeed', 'pMode', 'pHotkey', 'pCoords']) {
-    const el = $(id);
-    el.addEventListener('input', () => { propsDirty = true; });
-    el.addEventListener('change', () => { propsDirty = true; });
-  }
-  $('btnSaveProps').addEventListener('click', () => {
+  // The props fields AUTO-SAVE: a typed Repeat that was never saved looked
+  // saved (the field kept the value) but played once — the classic missed-
+  // Save trap. change fires on blur/select, the debounced input catches
+  // "type 3, press F12 immediately" without a blur in between.
+  const saveProps = () => {
+    if (!state || !state.current) return;
     propsDirty = false;
     post({ action: 'saveMacroSettings',
       repeat: $('pRepeat').value.trim(), pause: $('pPause').value.trim(),
       speed: $('pSpeed').value.trim(), mode: $('pMode').value,
       hotkey: $('pHotkey').value.trim(), coords: $('pCoords').value });
-  });
+  };
+  let propsSaveTimer = null;
+  for (const id of ['pRepeat', 'pPause', 'pSpeed', 'pMode', 'pHotkey', 'pCoords']) {
+    const el = $(id);
+    el.addEventListener('input', () => {
+      propsDirty = true;
+      clearTimeout(propsSaveTimer);
+      propsSaveTimer = setTimeout(saveProps, 600);
+    });
+    el.addEventListener('change', () => { clearTimeout(propsSaveTimer); saveProps(); });
+  }
+  $('btnSaveProps').addEventListener('click', () => { clearTimeout(propsSaveTimer); saveProps(); });
   $('btnSettings').addEventListener('click', () => {
     if (!state) return;
     const s = state.settings;
