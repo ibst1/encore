@@ -187,6 +187,17 @@ ToggleRecord(*) {
 
 ClipSeq() => DllCall("GetClipboardSequenceNumber", "uint")
 
+; Sömn i 50 ms-skivor som ger upp direkt på Esc eller stoppbegäran.
+_AbortableSleep(ms) {
+    global g_stopPlay
+    while (ms > 0) {
+        Sleep Min(50, ms)
+        ms -= 50
+        if (g_stopPlay || GetKeyState("Escape", "P"))
+            return
+    }
+}
+
 _RecEscStop(*) {
     global g_recording
     if g_recording
@@ -799,11 +810,13 @@ Play(*) {
                         (reps != 1 ? " · rep " rep (reps ? "/" reps : "") : "")
                         " — Esc aborts", A_ScreenWidth // 2 - 140, 40, 2)
                 if (mode = "fixed") {
-                    Sleep fixedDelay
+                    _AbortableSleep(fixedDelay)
                 } else {
+                    ; skivad sömn: en inspelad paus på flera sekunder gjorde
+                    ; Esc/F12 döva tills den löpt ut
                     wait := Round((e.t - prevT) / speed)
                     if (wait > 0)
-                        Sleep Min(wait, g_maxWaitMs)
+                        _AbortableSleep(Min(wait, g_maxWaitMs))
                     prevT := e.t
                 }
                 if (e.kind = "k") {
@@ -1065,8 +1078,16 @@ ReplayWindowSwitch(e) {
     if (!hwnd && e.HasOwnProp("path") && e.path != "" && FileExist(e.path)) {
         try {
             Run(e.path)
-            if (e.exe != "" && WinWait("ahk_exe " e.exe, , 10))
-                hwnd := WinExist()
+            ; avbrytbar variant av WinWait(.., 10) - Esc/F12 var döva i upp
+            ; till 10 s medan ett program startade
+            if (e.exe != "") {
+                deadline := A_TickCount + 10000
+                while (!(hwnd := WinExist("ahk_exe " e.exe)) && A_TickCount < deadline) {
+                    Sleep 50
+                    if (g_stopPlay || GetKeyState("Escape", "P"))
+                        return
+                }
+            }
         }
     }
     if !hwnd
@@ -1077,7 +1098,14 @@ ReplayWindowSwitch(e) {
         return
     try {
         WinActivate(hwnd)
-        WinWaitActive(hwnd, , 2)
+        ; avbrytbar variant av WinWaitActive(.., 2) - två fönsterbyten per
+        ; makrovarv gjorde stoppet trögt när målappen var upptagen
+        deadline := A_TickCount + 2000
+        while (!WinActive(hwnd) && A_TickCount < deadline) {
+            Sleep 25
+            if (g_stopPlay || GetKeyState("Escape", "P"))
+                return
+        }
     }
 }
 
