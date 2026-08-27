@@ -676,6 +676,11 @@ window.addEventListener('DOMContentLoaded', () => {
   $('btnRename').addEventListener('click', () => {
     if (state && state.current) renamePrompt(state.current);
   });
+  // rubriknamnet är klickbart av samma skäl som listraderna: namnet ÄR
+  // det naturliga stället att byta namn på
+  $('macroName').addEventListener('click', () => {
+    if (state && state.current) renamePrompt(state.current);
+  });
   $('btnExportAhk').addEventListener('click', () => {
     if (state && state.current) post({ action: 'exportAhk' });
   });
