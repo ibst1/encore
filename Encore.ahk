@@ -822,11 +822,27 @@ Play(*) {
                             downKeys.Delete(e.vk)
                         if (isCopyKey && pendingCopySeq != -1) {
                             waited4 := 0
-                            while (ClipSeq() = pendingCopySeq && waited4 < 1200) {
+                            while (ClipSeq() = pendingCopySeq && waited4 < 2000) {
                                 Sleep 25
                                 waited4 += 25
                                 if (g_stopPlay || GetKeyState("Escape", "P"))
                                     break
+                            }
+                            ; Sekvensnumret bumpas när ägarskapet tas - men Excel
+                            ; m.fl. renderar TEXTEN lätt (delayed rendering), och
+                            ; en klistring mitt i renderingen blir tom (4 rader av
+                            ; 50 försvann trots sekvensväntan). Att läsa
+                            ; A_Clipboard TVINGAR fram renderingen synkront innan
+                            ; uppspelningen går vidare. (AHK:s ClipWait duger inte:
+                            ; den nöjer sig med att GAMMALT innehåll ligger kvar.)
+                            waited5 := 0
+                            loop {
+                                harText := false
+                                try harText := (A_Clipboard != "")
+                                if (harText || waited5 >= 600 || g_stopPlay || GetKeyState("Escape", "P"))
+                                    break
+                                Sleep 30
+                                waited5 += 30
                             }
                             pendingCopySeq := -1
                         }
@@ -872,6 +888,15 @@ Play(*) {
                         waited3 += 25
                         if (g_stopPlay || GetKeyState("Escape", "P"))
                             break
+                    }
+                    waited3b := 0
+                    loop {   ; tvinga fram delayed rendering, se auto-väntan ovan
+                        harText := false
+                        try harText := (A_Clipboard != "")
+                        if (harText || waited3b >= 600 || g_stopPlay || GetKeyState("Escape", "P"))
+                            break
+                        Sleep 30
+                        waited3b += 30
                     }
                     g_playClipSeq := ClipSeq()
                 } else if (e.kind = "ls") {
