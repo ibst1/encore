@@ -786,6 +786,7 @@ Play(*) {
                 g_playRow := dataRows[rep]
             prevT := list.Length ? list[1].t : 0
             loopStack := []   ; ⟳-block: {startIdx, kvar}
+            pendingCopySeq := -1   ; urklippsbaslinje fangad vid kopieringskombons ned-halva
             li := 0
             while (li < list.Length) {
                 li += 1
@@ -807,10 +808,28 @@ Play(*) {
                 }
                 if (e.kind = "k") {
                     key := Format("vk{:X}sc{:03X}", e.vk, e.sc)
+                    ; Automatisk urklippsvänta: Ctrl+C/X/Insert kopierar
+                    ; asynkront i många appar - snapshotta sekvensnumret före
+                    ; ned-halvan och vänta efter upp-halvan tills det bumpats,
+                    ; annars hinner nästa steg klistra det GAMLA urklippet.
+                    isCopyKey := (e.vk = 0x43 || e.vk = 0x58 || e.vk = 0x2D)
+                        && (downKeys.Has(0xA2) || downKeys.Has(0xA3) || downKeys.Has(0x11))
+                    if (!e.up && isCopyKey)
+                        pendingCopySeq := ClipSeq()
                     Send "{" key (e.up ? " up" : " down") "}"
                     if e.up {
                         if downKeys.Has(e.vk)   ; Map.Delete throws on a missing key
                             downKeys.Delete(e.vk)
+                        if (isCopyKey && pendingCopySeq != -1) {
+                            waited4 := 0
+                            while (ClipSeq() = pendingCopySeq && waited4 < 1200) {
+                                Sleep 25
+                                waited4 += 25
+                                if (g_stopPlay || GetKeyState("Escape", "P"))
+                                    break
+                            }
+                            pendingCopySeq := -1
+                        }
                     } else {
                         downKeys[e.vk] := e.sc
                     }
