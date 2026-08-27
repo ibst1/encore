@@ -16,6 +16,7 @@ let lastRecIdx = -1;         // anchor row for Shift-click ranges
 let dragSteps = null;        // [from,to] event ranges while steps are dragged
 let dragStepIdxs = null;     // selected step indices while dragging (for in-macro reorder)
 let restoreStepSel = null;   // [first,last] step range to re-select after re-render
+let stepLoops = [];          // repeat brackets: {from,to (step idx), count, leEv}
 
 // ── vk → display label ─────────────────────────────────────────────────
 const VKNAME = {
@@ -83,14 +84,16 @@ function groupEvents() {
     return s;
   };
 
+  stepLoops = [];
+  const _lstack = [];
   while (i < n) {
     const e = events[i];
-    if (e.kind === 'ls') {
-      push('⟳', '<b>Repeat</b> — block start', i, i);
+    if (e.kind === 'ls') {           // repeat markers render as brackets, not steps
+      _lstack.push({ start: steps.length });
       i++;
     } else if (e.kind === 'le') {
-      push('⟳', '<b>Repeat</b> — block end, plays <b>×' + e.count + '</b>', i, i)
-        .edit = { type: 'repeat', count: e.count, at: i + 1 };
+      const b = _lstack.pop();
+      if (b) stepLoops.push({ from: b.start, to: steps.length - 1, count: e.count, leEv: i + 1 });
       i++;
     } else if (e.kind === 'w') {
       push('⇆', 'Switch to <b>' + esc(e.exe || e.title) + '</b>'
@@ -325,14 +328,46 @@ function renderSteps() {
     (state && state.current && steps.length) ? 'none' : '';
   document.getElementById('truncNote').hidden = !truncated;
   const t0 = events.length ? events[0].t : 0;
+  // nesting level per bracket + gutter width
+  const lvl = new Map();
+  for (const l of stepLoops) {
+    let v = 0;
+    for (const o of stepLoops)
+      if (o !== l && o.from <= l.from && o.to >= l.to) v++;
+    lvl.set(l, v);
+  }
+  const maxDepth = stepLoops.length ? Math.max(...stepLoops.map(l => lvl.get(l))) + 1 : 0;
   steps.forEach((s, idx) => {
     // the pause before this step = gap between the previous step's last
     // event and this step's first event; click the cell to change it
     const gap = idx === 0 ? 0 : s.t - events[steps[idx - 1].to - 1].t;
     const tr = document.createElement('tr');
     if (selSteps.has(idx)) tr.classList.add('sel');
-    tr.innerHTML = '<td class="n">' + (idx + 1) + '</td><td class="ic">' + s.icon
+    let gut = '';
+    if (maxDepth) {
+      gut = '<td class="lgut" style="width:' + (maxDepth * 10 + 6) + 'px">';
+      for (const l of stepLoops) {
+        if (l.to < l.from || idx < l.from || idx > l.to) continue;
+        const left = lvl.get(l) * 10 + 2;
+        gut += '<span class="lg' + (idx === l.from ? ' top' : '') + (idx === l.to ? ' bot' : '')
+             + '" style="left:' + left + 'px"></span>';
+        if (idx === l.from)
+          gut += '<span class="lgc" style="left:' + left + 'px" data-le="' + l.leEv
+               + '" data-count="' + l.count
+               + '" title="Click to change the repeat count (0 removes the bracket)">×' + l.count + '</span>';
+      }
+      gut += '</td>';
+    }
+    tr.innerHTML = gut + '<td class="n">' + (idx + 1) + '</td><td class="ic">' + s.icon
       + '</td><td class="lb">' + s.html + '</td><td class="tm"></td>';
+    tr.querySelectorAll('.lgc').forEach(el => el.addEventListener('click', ev => {
+      ev.stopPropagation();
+      if (truncated) return;
+      const v = prompt('Repeat count (0 removes the bracket):', el.dataset.count);
+      const c = parseInt(v, 10);
+      if (!isNaN(c) && c >= 0)
+        post({ action: 'setRepeatCount', at: +el.dataset.le, count: c });
+    }));
     const tm = tr.querySelector('.tm');
     if (idx === 0) {
       tm.textContent = 'start';
@@ -640,13 +675,6 @@ window.addEventListener('DOMContentLoaded', () => {
     if (selSteps.size !== 1) return;
     const s = steps[[...selSteps][0]];
     if (!s.edit) return;
-    if (s.edit.type === 'repeat') {
-      const v = prompt('Play the repeat block how many times?', s.edit.count);
-      const c = parseInt(v, 10);
-      if (!isNaN(c) && c >= 1)
-        post({ action: 'setRepeatCount', at: s.edit.at, count: c });
-      return;
-    }
     showStepModal({ mode: 'edit', from: s.from, to: s.to }, s.edit);
   });
   $('stType').addEventListener('change', applyStepType);
@@ -680,7 +708,7 @@ window.addEventListener('DOMContentLoaded', () => {
       + ' how many times?', '2');
     const c = parseInt(v, 10);
     if (isNaN(c) || c < 2) return;
-    restoreStepSel = [a, b + 2];   // markers add one step on each side
+    restoreStepSel = [a, b];       // brackets are not steps — indices keep
     post({ action: 'repeatSteps', from: steps[a].from, to: steps[b].to, count: c });
   });
   $('btnMoveUp').addEventListener('click', () => moveStep('up'));

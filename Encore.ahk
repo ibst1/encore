@@ -1470,13 +1470,24 @@ ToggleAutostart(*) {
 OpenUi(*) {
     global g_uiWin, g_uiCtrl, g_uiCore
     if !g_uiWin {
-        DllCall("shell32\SetCurrentProcessExplicitAppUserModelID", "str", "Encore.Application.1")
+        DllCall("shell32\SetCurrentProcessExplicitAppUserModelID", "str", "Encore.Application.2")
         g_uiWin := Gui("+Resize +MinSize640x420", "Encore")
         g_uiWin.OnEvent("Close", (*) => (SaveUiGeometry(), g_uiWin.Hide()))
         g_uiWin.OnEvent("Size", UiResize)
         g_uiWin.Show(ReadUiGeometry())
         FitUiToScreen()
         DllCall("dwmapi\DwmSetWindowAttribute", "ptr", g_uiWin.hwnd, "uint", 20, "int*", 1, "uint", 4)
+        ; WM_SETICON täcker titelraden, men med ett explicit AppUserModelID
+        ; faller aktivitetsfältets GRUPPIKON tillbaka på fönsterklassens ikon
+        ; — AutoHotkeys gröna H — så klassikonen byts också (GCLP_HICON/-SM).
+        try {
+            ico16 := LoadPicture(A_ScriptDir "\app.ico", "Icon1 w16 h16", &_it1)
+            ico32 := LoadPicture(A_ScriptDir "\app.ico", "Icon1 w32 h32", &_it2)
+            SendMessage(0x80, 0, ico16, , g_uiWin.hwnd)
+            SendMessage(0x80, 1, ico32, , g_uiWin.hwnd)
+            DllCall("SetClassLongPtr", "ptr", g_uiWin.hwnd, "int", -14, "ptr", ico32)   ; GCLP_HICON
+            DllCall("SetClassLongPtr", "ptr", g_uiWin.hwnd, "int", -34, "ptr", ico16)   ; GCLP_HICONSM
+        }
         try {
             g_uiCtrl := WebView2.create(g_uiWin.hwnd, , 0, "", "", 0
                 , A_ScriptDir "\lib\WebView2Loader.dll")
@@ -1968,13 +1979,33 @@ UiSetRepeatCount(msg) {
     global g_events, g_currentFile, g_recording, g_playing
     if (g_currentFile = "" || g_recording || g_playing)
         return
-    at := 0, count := 0
+    at := 0, count := -1
     try {
-        at := Integer(msg.Get("at", 0)), count := Integer(msg.Get("count", 0))
+        at := Integer(msg.Get("at", 0)), count := Integer(msg.Get("count", -1))
     }
-    if (at < 1 || at > g_events.Length || g_events[at].kind != "le" || count < 1)
+    if (at < 1 || at > g_events.Length || g_events[at].kind != "le" || count < 0)
         return
-    g_events[at].count := count
+    if (count = 0) {
+        ; 0 = ta bort klammern: hitta matchande ls bakåt med nästlingsräknare
+        depth := 1, lsAt := 0, idx := at - 1
+        while (idx >= 1) {
+            if (g_events[idx].kind = "le")
+                depth += 1
+            else if (g_events[idx].kind = "ls") {
+                depth -= 1
+                if (depth = 0) {
+                    lsAt := idx
+                    break
+                }
+            }
+            idx -= 1
+        }
+        g_events.RemoveAt(at)          ; högsta index först
+        if lsAt
+            g_events.RemoveAt(lsAt)
+    } else {
+        g_events[at].count := count
+    }
     WriteMacroFile(g_currentFile)
     InitTray()
     PushMacro()
