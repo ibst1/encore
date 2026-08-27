@@ -185,6 +185,8 @@ ToggleRecord(*) {
         StartRecording()
 }
 
+ClipSeq() => DllCall("GetClipboardSequenceNumber", "uint")
+
 _RecEscStop(*) {
     global g_recording
     if g_recording
@@ -691,7 +693,7 @@ EffNum(key, glob) {
 }
 
 Play(*) {
-    global g_playing, g_stopPlay, g_playRef, g_playRefT, g_playCoords, g_playRow
+    global g_playing, g_stopPlay, g_playRef, g_playRefT, g_playCoords, g_playRow, g_playClipSeq
     if g_recording {
         StopRecording()   ; the play key doubles as stop while recording
         return
@@ -766,6 +768,7 @@ Play(*) {
     downKeys := Map()      ; vk → sc for keys currently sent down
     downBtns := Map()      ; button name → true
     g_playRef := 0, g_playRefT := 0
+    g_playClipSeq := ClipSeq()   ; baslinje för "Wait for clipboard"-steg
     g_playCoords := g_curProps.Get("coords", "")
     osdName := g_currentFile != ""
         ? SubStr(SubStr(g_currentFile, InStr(g_currentFile, "\", , -1) + 1), 1, -6) : ""
@@ -838,6 +841,20 @@ Play(*) {
                         break
                     }
                     SendText(dv.value)
+                } else if (e.kind = "cw") {
+                    ; Vänta tills urklippet FAKTISKT uppdaterats sedan förra
+                    ; passagen. Ctrl+C i t.ex. Excel är asynkron - vid snabb
+                    ; uppspelning hann klistringen ibland före kopieringen och
+                    ; en rad "missades". Sekvensnumret bumpas av varje ny
+                    ; kopiering, så varje loopvarv får en färsk baslinje.
+                    waited3 := 0
+                    while (ClipSeq() = g_playClipSeq && waited3 < e.ms) {
+                        Sleep 25
+                        waited3 += 25
+                        if (g_stopPlay || GetKeyState("Escape", "P"))
+                            break
+                    }
+                    g_playClipSeq := ClipSeq()
                 } else if (e.kind = "ls") {
                     loopStack.Push({startIdx: li, kvar: 0})
                 } else if (e.kind = "le") {
@@ -1106,6 +1123,8 @@ WriteMacroFile(path) {
             out .= "ls`t" e.t "`n"
         else if (e.kind = "le")
             out .= "le`t" e.t "`t" e.count "`n"
+        else if (e.kind = "cw")
+            out .= "cw`t" e.t "`t" e.ms "`n"
         else
             out .= "m`t" e.t "`t" e.msg "`t" e.x "`t" e.y "`t" e.data
                 . (e.HasOwnProp("wx") ? "`t" e.wx "`t" e.wy : "") "`n"
@@ -1192,6 +1211,8 @@ LoadMacroFile(path) {
                 g_events.Push({t: Integer(f[2]), kind: "ls"})
             else if (f.Length >= 3 && f[1] = "le")
                 g_events.Push({t: Integer(f[2]), kind: "le", count: Integer(f[3])})
+            else if (f.Length >= 3 && f[1] = "cw")
+                g_events.Push({t: Integer(f[2]), kind: "cw", ms: Integer(f[3])})
         }
     }
 }
@@ -1720,6 +1741,8 @@ PushMacro() {
             arr.Push(Map("kind", "ls", "t", e.t))
         else if (e.kind = "le")
             arr.Push(Map("kind", "le", "t", e.t, "count", e.count))
+        else if (e.kind = "cw")
+            arr.Push(Map("kind", "cw", "t", e.t, "ms", e.ms))
         else
             arr.Push(Map("kind", "m", "t", e.t, "msg", e.msg, "x", e.x, "y", e.y, "data", e.data))
     }
@@ -2081,6 +2104,13 @@ BuildStepEvent(msg, t) {
         if (col < 1)
             col := 1
         return {t: t, kind: "v", col: col}
+    }
+    if (type = "clipwait") {
+        tmo := 3000
+        try tmo := Integer(msg.Get("timeout", "3000"))
+        if (tmo < 100)
+            tmo := 3000
+        return {t: t, kind: "cw", ms: tmo}
     }
     if (type = "waitwin" && (Trim(msg.Get("exe", "")) != "" || Trim(msg.Get("title", "")) != "")) {
         tmo := 10000
