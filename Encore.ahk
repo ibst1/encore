@@ -185,6 +185,12 @@ ToggleRecord(*) {
         StartRecording()
 }
 
+_RecEscStop(*) {
+    global g_recording
+    if g_recording
+        StopRecording()
+}
+
 StartRecording() {
     global g_events, g_recording, g_ih, g_lastX, g_lastY, g_btnState, g_lastActive
     g_events := []
@@ -205,6 +211,10 @@ StartRecording() {
     Hotkey("~*WheelDown",  RecWheel.Bind(-120, 0x20A), "On")
     Hotkey("~*WheelLeft",  RecWheel.Bind(-120, 0x20E), "On")
     Hotkey("~*WheelRight", RecWheel.Bind(120,  0x20E), "On")
+    ; Esc stops the recording too (pass-through, so the app still gets the
+    ; keypress). The Esc-down lands in the recording but its up never does -
+    ; recording stops first - so CleanUnmatched drops it from the result.
+    Hotkey("~*Escape", _RecEscStop, "On")
     g_recording := true
     global g_fgX, g_fgY
     try WinGetPos(&g_fgX, &g_fgY, , , WinGetID("A"))
@@ -224,7 +234,7 @@ StopRecording() {
     global g_recording, g_ih
     SetTimer(PollMouse, 0)
     SetTimer(RecordActiveWindow, 0)
-    for hk in ["~*WheelUp", "~*WheelDown", "~*WheelLeft", "~*WheelRight"]
+    for hk in ["~*WheelUp", "~*WheelDown", "~*WheelLeft", "~*WheelRight", "~*Escape"]
         try Hotkey(hk, "Off")
     if g_ih {
         try g_ih.Stop()
