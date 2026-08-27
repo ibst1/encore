@@ -119,6 +119,7 @@
         <option value="switch">Switch to program</option>
         <option value="waitwin">Wait for window</option>
         <option value="value">Next data value ({value})</option>
+        <option value="clipwait">Wait for clipboard (after a copy)</option>
       </select>
     </div>
     <div class="row st-field" data-for="value"><label>Column (tab-separated)</label><input id="stCol" type="text" value="1"></div>
@@ -127,7 +128,7 @@
     <div class="row st-field" data-for="send"><label>Keys (e.g. ^s or {Enter})</label><input id="stKeys" type="text" style="width:180px"></div>
     <div class="row st-field" data-for="switch waitwin"><label>Program (exe)</label><input id="stExe" type="text" style="width:180px"></div>
     <div class="row st-field" data-for="switch waitwin"><label>Title contains (optional)</label><input id="stTitle" type="text" style="width:180px"></div>
-    <div class="row st-field" data-for="waitwin"><label>Timeout ms</label><input id="stTimeout" type="text"></div>
+    <div class="row st-field" data-for="waitwin clipwait"><label>Timeout ms</label><input id="stTimeout" type="text"></div>
     <div class="row st-field" data-for="waitwin"><label>Wait until</label>
       <select id="stActive"><option value="0">the window exists</option><option value="1">the window is active</option></select>
     </div>

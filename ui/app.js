@@ -97,6 +97,10 @@ function groupEvents() {
       const b = _lstack.pop();
       if (b) stepLoops.push({ from: b.start, to: steps.length - 1, count: e.count, leEv: i + 1 });
       i++;
+    } else if (e.kind === 'cw') {
+      push('⧉', 'Wait for clipboard change (≤ ' + fmtDur(e.ms) + ')', i, i)
+        .edit = { type: 'clipwait', timeout: e.ms };
+      i++;
     } else if (e.kind === 'w') {
       push('⇆', 'Switch to <b>' + esc(e.exe || e.title) + '</b>'
         + (e.title ? ' <span class="txt">' + esc(e.title) + '</span>' : ''), i, i)
