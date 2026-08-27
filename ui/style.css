@@ -87,6 +87,32 @@ button.primary:hover { background: var(--accent2); }
 #recList li.droptarget { background: var(--bg3); border-left-color: var(--green); }
 #steps tr.droprow-above td { border-top: 2px solid var(--green); }
 #steps tr.droprow-below td { border-bottom: 2px solid var(--green); }
+
+/* ── repeat brackets (accent blue, in the gutter left of the steps) ── */
+#steps td.lgut { padding: 0; position: relative; }
+.lg {
+  position: absolute;
+  top: -1px; bottom: -1px;
+  width: 7px;
+  border-left: 2px solid var(--accent2);
+  pointer-events: none;
+}
+.lg.top { top: 2px; border-top: 2px solid var(--accent2); }
+.lg.bot { bottom: 2px; border-bottom: 2px solid var(--accent2); }
+.lgc {
+  position: absolute;
+  z-index: 2;
+  top: 4px;
+  background: var(--accent2);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 3px;
+  padding: 0 3px;
+  line-height: 14px;
+  cursor: pointer;
+}
+.lgc:hover { background: #2a8fd0; }
 #recList li .meta { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
 #recList li .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #recList .empty { color: var(--text-dim); font-style: italic; cursor: default; }
