@@ -187,6 +187,11 @@ ToggleRecord(*) {
 
 ClipSeq() => DllCall("GetClipboardSequenceNumber", "uint")
 
+_PlayLog(t) {
+    global g_playLog
+    try FileAppend(FormatTime(A_Now, "HH:mm:ss") "." Format("{:03}", Mod(A_TickCount, 1000)) "  " t "`r`n", g_playLog, "UTF-8")
+}
+
 ; Sömn i 50 ms-skivor som ger upp direkt på Esc eller stoppbegäran.
 _AbortableSleep(ms) {
     global g_stopPlay
@@ -780,6 +785,11 @@ Play(*) {
     downBtns := Map()      ; button name → true
     g_playRef := 0, g_playRefT := 0
     g_playClipSeq := ClipSeq()   ; baslinje för "Wait for clipboard"-steg
+    ; uppspelningslogg för felsökning av kopiera/klistra-bortfall - skrivs om
+    ; vid varje uppspelning och håller alltså bara senaste körningen
+    global g_playLog := A_ScriptDir "\playback.log"
+    try FileDelete(g_playLog)
+    _PlayLog("uppspelning: " g_events.Length " event")
     g_playCoords := g_curProps.Get("coords", "")
     osdName := g_currentFile != ""
         ? SubStr(SubStr(g_currentFile, InStr(g_currentFile, "\", , -1) + 1), 1, -6) : ""
@@ -829,6 +839,17 @@ Play(*) {
                         && (downKeys.Has(0xA2) || downKeys.Has(0xA3) || downKeys.Has(0x11))
                     if (!e.up && isCopyKey)
                         pendingCopySeq := ClipSeq()
+                    ; klistring: logga var den faktiskt landar - "aktivt fönster"
+                    ; är inte alltid "redo fönster", och en V:a i fel fokus är
+                    ; osynlig utan det här
+                    if (!e.up && e.vk = 0x56
+                        && (downKeys.Has(0xA2) || downKeys.Has(0xA3) || downKeys.Has(0x11))) {
+                        aktivExe2 := ""
+                        try aktivExe2 := WinGetProcessName("A")
+                        klippLen2 := 0
+                        try klippLen2 := StrLen(A_Clipboard)
+                        _PlayLog("klistring rep " rep ": aktiv " aktivExe2 ", klipp " klippLen2 " tecken")
+                    }
                     Send "{" key (e.up ? " up" : " down") "}"
                     if e.up {
                         if downKeys.Has(e.vk)   ; Map.Delete throws on a missing key
@@ -841,6 +862,7 @@ Play(*) {
                                 if (g_stopPlay || GetKeyState("Escape", "P"))
                                     break
                             }
+                            seqOk := ClipSeq() != pendingCopySeq
                             ; Sekvensnumret bumpas när ägarskapet tas - men Excel
                             ; m.fl. renderar TEXTEN lätt (delayed rendering), och
                             ; en klistring mitt i renderingen blir tom (4 rader av
@@ -849,14 +871,23 @@ Play(*) {
                             ; uppspelningen går vidare. (AHK:s ClipWait duger inte:
                             ; den nöjer sig med att GAMMALT innehåll ligger kvar.)
                             waited5 := 0
+                            klippLen := 0
                             loop {
                                 harText := false
-                                try harText := (A_Clipboard != "")
+                                try {
+                                    txt := A_Clipboard
+                                    klippLen := StrLen(txt)
+                                    harText := (txt != "")
+                                }
                                 if (harText || waited5 >= 600 || g_stopPlay || GetKeyState("Escape", "P"))
                                     break
                                 Sleep 30
                                 waited5 += 30
                             }
+                            aktivExe := ""
+                            try aktivExe := WinGetProcessName("A")
+                            _PlayLog("kopiering rep " rep ": seq " (seqOk ? "OK efter " waited4 " ms" : "TIMEOUT " waited4 " ms")
+                                . ", render " waited5 " ms, klipp " klippLen " tecken, aktiv " aktivExe)
                             pendingCopySeq := -1
                         }
                     } else {

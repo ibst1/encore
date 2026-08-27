@@ -252,6 +252,37 @@ function renamePrompt(name) {
     post({ action: 'rename', name, newName: nn.trim() });
 }
 
+// Inline rename in the header: the name becomes an input in place —
+// Enter/blur commits, Escape cancels. No popup.
+function startInlineRename() {
+  if (!state || !state.current) return;
+  const span = document.getElementById('macroName');
+  if (span.querySelector('input')) return;
+  const old = state.current;
+  const inp = document.createElement('input');
+  inp.className = 'name-edit';
+  inp.value = old;
+  inp.spellcheck = false;
+  span.textContent = '';
+  span.appendChild(inp);
+  let closed = false;
+  const done = commit => {
+    if (closed) return;
+    closed = true;
+    const v = inp.value.trim();
+    span.textContent = state.current || '–';
+    if (commit && v && v !== old) post({ action: 'rename', name: old, newName: v });
+  };
+  inp.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') done(true);
+    else if (ev.key === 'Escape') done(false);
+    ev.stopPropagation();
+  });
+  inp.addEventListener('blur', () => done(true));
+  inp.focus();
+  inp.select();
+}
+
 function renderList() {
   const ul = document.getElementById('recList');
   ul.innerHTML = '';
@@ -550,7 +581,8 @@ function renderState() {
   const st = document.getElementById('status');
   st.textContent = state.recording ? 'recording…' : state.playing ? 'playing…' : '';
   st.classList.toggle('live', state.recording || state.playing);
-  document.getElementById('macroName').textContent = state.current || '–';
+  const mn = document.getElementById('macroName');
+  if (!mn.querySelector('input')) mn.textContent = state.current || '–';
   const cur = state.recordings.find(r => r.name === state.current);
   document.getElementById('macroMeta').textContent =
     cur ? cur.events + ' events · ' + fmtDur(cur.durMs) : '';
@@ -673,14 +705,10 @@ window.addEventListener('DOMContentLoaded', () => {
   $('btnPlay').addEventListener('click', () => post({ action: 'play' }));
   $('btnStop').addEventListener('click', () => post({ action: 'stop' }));
   $('btnFolder').addEventListener('click', () => post({ action: 'openFolder' }));
-  $('btnRename').addEventListener('click', () => {
-    if (state && state.current) renamePrompt(state.current);
-  });
+  $('btnRename').addEventListener('click', startInlineRename);
   // rubriknamnet är klickbart av samma skäl som listraderna: namnet ÄR
   // det naturliga stället att byta namn på
-  $('macroName').addEventListener('click', () => {
-    if (state && state.current) renamePrompt(state.current);
-  });
+  $('macroName').addEventListener('click', startInlineRename);
   $('btnExportAhk').addEventListener('click', () => {
     if (state && state.current) post({ action: 'exportAhk' });
   });
