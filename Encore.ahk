@@ -696,6 +696,12 @@ Play(*) {
     }
     g_playing := true
     g_stopPlay := false
+    ; Annonsera uppspelningen för andra skript: Keyboard assistants vakthund
+    ; släpper annars "fastnade" modifierare - och en uppspelad Ctrl+C håller
+    ; Ctrl syntetiskt nere i mänsklig takt, längre än dess 300 ms-gräns, så
+    ; Ctrl rycktes bort och bara "c" kom fram. Mutexen försvinner automatiskt
+    ; med processen om uppspelningen kraschar.
+    global g_playMutex := DllCall("CreateMutexW", "ptr", 0, "int", 0, "str", "Local\EncorePlayback", "ptr")
     InitTray()
     ; wait until the play hotkey's own modifiers are physically released —
     ; a still-held Win/Ctrl would combine with the replayed keys
@@ -865,6 +871,10 @@ Play(*) {
     for btn in downBtns
         try Click btn " Up"
     ToolTip(, , , 2)
+    if g_playMutex {
+        DllCall("CloseHandle", "ptr", g_playMutex)
+        g_playMutex := 0
+    }
     g_playing := false
     InitTray()
     if err {
