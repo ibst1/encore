@@ -1376,16 +1376,24 @@ LoadConfig(reread := false) {
         InitTray()
 }
 
+; Registreras med *-prefix (ignorera extra modifierare): under uppspelning av
+; ett makro med Ctrl ligger Ctrl LOGISKT nere när användaren trycker F12 -
+; hooken ser då Ctrl+F12, som inte matchar "F12", och stoppet uteblir. Med *
+; träffar tangenten oavsett vilka modifierare uppspelningen råkar hålla.
+; (~ hade inte hjälpt: pass-through ändrar inte matchningen.) De lagrade/
+; visade namnen behåller sin form utan prefix.
+_Wild(hk) => (hk != "" && SubStr(hk, 1, 1) != "*") ? "*" hk : hk
+
 ApplyHotkey(&stored, newKey, fn) {
     if g_cliMode {   ; a CLI run must not fight the tray instance's hotkeys
         stored := ""
         return
     }
     if (stored != "" && stored != newKey)
-        try Hotkey(stored, "Off")
+        try Hotkey(_Wild(stored), "Off")
     if (newKey != "") {
         try {
-            Hotkey(newKey, fn, "On")
+            Hotkey(_Wild(newKey), fn, "On")
             stored := newKey
         } catch {
             Notify("Encore: invalid hotkey in the config: " newKey)
@@ -1894,14 +1902,14 @@ SyncMacroHotkeys() {
     }
     for hk, path in g_macroHotkeys.Clone() {
         if (!wanted.Has(hk) || wanted[hk] != path) {
-            try Hotkey(hk, "Off")
+            try Hotkey(_Wild(hk), "Off")
             g_macroHotkeys.Delete(hk)
         }
     }
     for hk, path in wanted {
         if !g_macroHotkeys.Has(hk) {
             try {
-                Hotkey(hk, PlayMacroFile.Bind(path), "On")
+                Hotkey(_Wild(hk), PlayMacroFile.Bind(path), "On")
                 g_macroHotkeys[hk] := path
             } catch {
                 Notify("Encore: invalid macro hotkey: " hk)
