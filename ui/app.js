@@ -16,6 +16,8 @@ let lastRecIdx = -1;         // anchor row for Shift-click ranges
 let dragSteps = null;        // [from,to] event ranges while steps are dragged
 let dragStepIdxs = null;     // selected step indices while dragging (for in-macro reorder)
 let restoreStepSel = null;   // [first,last] step range to re-select after re-render
+let propsDirty = false;      // unsaved edits in the per-recording props fields
+let lastCurrent = null;      // to reset propsDirty when another macro is picked
 let stepLoops = [];          // repeat brackets: {from,to (step idx), count, leEv}
 
 // ── vk → display label ─────────────────────────────────────────────────
@@ -266,7 +268,10 @@ function renderList() {
     li.innerHTML = '<span class="nm"></span><span class="meta"></span>';
     li.querySelector('.nm').textContent = r.name;
     li.querySelector('.meta').textContent = r.events + ' · ' + fmtDur(r.durMs);
-    li.title = 'Double-click or right-click to rename · Ctrl/Shift-click to select several';
+    li.title = 'Double-click or right-click to rename · Ctrl/Shift-click to select several'
+      + (r.name === state.current
+          ? ' · ' + (prettyHk((state.settings || {}).playKey) || 'F12') + ' plays this recording'
+          : '');
     li.addEventListener('click', ev => {
       if (ev.ctrlKey) {                    // toggle this row in the selection
         if (selMacros.has(r.name)) selMacros.delete(r.name);
@@ -522,6 +527,14 @@ function applyStepType() {
   });
 }
 
+function prettyHk(hk) {
+  if (!hk) return '';
+  const map = { '^': 'Ctrl+', '!': 'Alt+', '+': 'Shift+', '#': 'Win+' };
+  let mods = '', i = 0;
+  while (i < hk.length && map[hk[i]]) { mods += map[hk[i]]; i++; }
+  return mods + hk.slice(i);
+}
+
 function renderState() {
   if (!state) return;
   renderList();
@@ -543,13 +556,28 @@ function renderState() {
                     'btnTrim', 'btnSchedule', 'btnSaveProps', 'btnSaveData',
                     'btnCliHelp'])
     document.getElementById(id).disabled = noMacro;
-  const p = state.macroProps || {};
-  document.getElementById('pRepeat').value = p.repeat != null ? p.repeat : '';
-  document.getElementById('pPause').value = p.pause != null ? p.pause : '';
-  document.getElementById('pSpeed').value = p.speed != null ? p.speed : '';
-  document.getElementById('pMode').value = p.mode || '';
-  document.getElementById('pHotkey').value = p.hotkey || '';
-  document.getElementById('pCoords').value = p.coords || '';
+  // hotkey tooltips reflect whatever keys are configured
+  const pk = prettyHk((state.settings || {}).playKey) || 'F12';
+  const rk = prettyHk((state.settings || {}).recordKey) || 'Shift+F12';
+  document.getElementById('btnPlay').title = pk + ' plays the selected recording';
+  document.getElementById('btnRecord').title = rk + ' starts and stops recording';
+  document.getElementById('btnStop').title = 'Esc or ' + pk + ' stops recording and playback';
+  if (state.current !== lastCurrent) {   // another macro picked: fields are its own
+    lastCurrent = state.current;
+    propsDirty = false;
+  }
+  // A state push (recording toggled, playback started with F12, …) must not
+  // wipe unsaved edits in the props fields — that was "global repeat clears
+  // when I press F12". Fields refresh again after Save or macro switch.
+  if (!propsDirty) {
+    const p = state.macroProps || {};
+    document.getElementById('pRepeat').value = p.repeat != null ? p.repeat : '';
+    document.getElementById('pPause').value = p.pause != null ? p.pause : '';
+    document.getElementById('pSpeed').value = p.speed != null ? p.speed : '';
+    document.getElementById('pMode').value = p.mode || '';
+    document.getElementById('pHotkey').value = p.hotkey || '';
+    document.getElementById('pCoords').value = p.coords || '';
+  }
   const dt = document.getElementById('dataText');
   if (document.activeElement !== dt)   // don't clobber while the user types
     dt.value = state.dataText || '';
@@ -755,7 +783,13 @@ window.addEventListener('DOMContentLoaded', () => {
     post({ action: 'removeTask' });
     $('schStatus').textContent = 'Removing…';
   });
+  for (const id of ['pRepeat', 'pPause', 'pSpeed', 'pMode', 'pHotkey', 'pCoords']) {
+    const el = $(id);
+    el.addEventListener('input', () => { propsDirty = true; });
+    el.addEventListener('change', () => { propsDirty = true; });
+  }
   $('btnSaveProps').addEventListener('click', () => {
+    propsDirty = false;
     post({ action: 'saveMacroSettings',
       repeat: $('pRepeat').value.trim(), pause: $('pPause').value.trim(),
       speed: $('pSpeed').value.trim(), mode: $('pMode').value,
