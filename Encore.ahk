@@ -1641,7 +1641,14 @@ OpenUi(*) {
             DllCall("SetClassLongPtr", "ptr", g_uiWin.hwnd, "int", -34, "ptr", ico16)   ; GCLP_HICONSM
         }
         try {
-            g_uiCtrl := WebView2.create(g_uiWin.hwnd, , 0, "", "", 0
+            ; A dedicated user data folder. Passing "" makes WebView2.ahk fall
+            ; back to %LOCALAPPDATA%\Microsoft\Edge\User Data - Edge's OWN
+            ; profile - and creating an environment against a folder that a
+            ; running Edge holds locked fails with ERROR_INVALID_STATE
+            ; (0x8007139F). It is a browser profile, so keep it out of OneDrive.
+            dataDir := EnvGet("LOCALAPPDATA") "\Encore\WebView2"
+            try DirCreate(dataDir)
+            g_uiCtrl := WebView2.create(g_uiWin.hwnd, , 0, dataDir, "", 0
                 , A_ScriptDir "\lib\WebView2Loader.dll")
             g_uiCtrl.Fill()
             g_uiCore := g_uiCtrl.CoreWebView2
@@ -1651,7 +1658,9 @@ OpenUi(*) {
             g_uiWin.Destroy()
             g_uiWin := 0, g_uiCtrl := 0, g_uiCore := 0
             LogError(err, "")
-            Notify("Encore: could not start the UI (WebView2 runtime missing?)")
+            ; say what actually failed: the old text guessed "runtime
+            ; missing" at every cause, which sent the last hunt the wrong way
+            Notify("Encore: could not start the UI (" err.Message ")")
             return
         }
     } else {
