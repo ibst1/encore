@@ -2939,8 +2939,22 @@ Cleanup(*) {
 }
 
 ; Silent tray app: log errors to a file instead of a dialog box.
+
+; Log next to the script only when that is a private place. These folders are
+; synced with OneDrive across two machines, and a shared error.log interleaves
+; lines from both - which actively misled a debugging session: the newest
+; entries had come from the OTHER computer. Per-machine, in LOCALAPPDATA.
+Felloggen() {
+    static sökväg := ""
+    if (sökväg != "")
+        return sökväg
+    mapp := EnvGet("LOCALAPPDATA") "\Encore"
+    try DirCreate(mapp)
+    return sökväg := mapp "\error.log"
+}
+
 LogError(err, mode) {
     try FileAppend(FormatTime() "  " (IsObject(err) ? err.Message " (" err.File ":" err.Line ")" : String(err)) "`n"
-        , A_ScriptDir "\error.log", "UTF-8")
+        , Felloggen(), "UTF-8")
     return 1
 }
