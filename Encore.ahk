@@ -55,6 +55,9 @@ global g_recordKey     := ""
 global g_playKey       := ""
 global g_mode          := "original"
 global g_speed         := 1.0
+global g_mouseMoves    := "all"  ; "all" or "jump" - see CollapseMoves
+global g_undo          := Map()  ; macro path -> [file text before each edit]
+global g_undoMax       := 20
 global g_fixedDelayMs  := 50
 global g_maxWaitMs     := 5000
 global g_pollMs        := 15
@@ -700,6 +703,53 @@ EffInt(key, glob) {
     return glob
 }
 
+; Replay a run of pointer movement as a single jump to where it ended.
+;
+; This is what Speed cannot do. Speed divides the recorded PAUSES; it does not
+; remove the cost of performing an event, and a recording that walks the mouse
+; across the screen is mostly movement - 109 of the 129 events in a typical one
+; here. Dropping the intermediate points is the only thing that makes such a
+; macro short.
+;
+; The LAST point of each run is kept, with its own timestamp: that is where the
+; pointer must end up for whatever follows, and keeping its time leaves the
+; pause before the next event untouched.
+;
+; Movement while a button is held is left alone. There the path IS the gesture
+; - a drag-select, a freehand stroke, dragging a slider - and jumping from the
+; start to the end of it would perform something quite different from what was
+; recorded.
+CollapseMoves(list) {
+    static DOWN := Map(0x201, 1, 0x204, 1, 0x207, 1, 0x20B, 1)
+    static UP   := Map(0x202, 1, 0x205, 1, 0x208, 1, 0x20C, 1)
+    out := [], held := 0, i := 1, n := list.Length
+    while (i <= n) {
+        e := list[i]
+        if (e.kind = "m" && DOWN.Has(e.msg))
+            held += 1
+        else if (e.kind = "m" && UP.Has(e.msg))
+            held := Max(0, held - 1)
+        if (held = 0 && e.kind = "m" && e.msg = 0x200) {
+            j := i
+            while (j < n && list[j + 1].kind = "m" && list[j + 1].msg = 0x200)
+                j += 1
+            out.Push(list[j])
+            i := j + 1
+            continue
+        }
+        out.Push(e)
+        i += 1
+    }
+    return out
+}
+
+; Per-recording override for a text-valued property.
+EffStr(key, glob) {
+    global g_curProps
+    v := g_curProps.Get(key, "")
+    return (v != "") ? v : glob
+}
+
 EffNum(key, glob) {
     global g_curProps
     if (g_curProps.Get(key, "") != "") {
@@ -781,6 +831,8 @@ Play(*) {
     Notify("▶ Playing " g_events.Length " events" suffix "…", 1500)
     SendLevel 1   ; replayed input is visible to other AHK scripts, like real typing
     list := (mode = "fixed") ? FixedModeList() : g_events
+    if (EffStr("moves", g_mouseMoves) = "jump")
+        list := CollapseMoves(list)
     downKeys := Map()      ; vk → sc for keys currently sent down
     downBtns := Map()      ; button name → true
     g_playRef := 0, g_playRefT := 0
@@ -1194,8 +1246,63 @@ SaveMacro() {
 
 ; A "p" header line carries per-recording playback overrides
 ; (repeat, pause ms, speed, mode) — empty field = use the global setting.
+; The file as it stands BEFORE an edit overwrites it.
+;
+; Taken here rather than in each editing command, so everything that changes a
+; macro is undoable - trim, delete, move, insert, the delay and repeat editors,
+; the property panel - and so is anything added later, with no snapshot call to
+; remember. The cost is that undo restores a FILE, not a described action,
+; which is also why it can restore the properties line as readily as the events.
+;
+; A fresh recording writes to a path that does not exist yet and so pushes
+; nothing: undo never reaches back past the recording that created a macro.
+PushUndo(path) {
+    global g_undo, g_undoMax
+    if !FileExist(path)
+        return
+    txt := ""
+    try txt := FileRead(path, "UTF-8")
+    catch
+        return
+    if !g_undo.Has(path)
+        g_undo[path] := []
+    st := g_undo[path]
+    st.Push(txt)
+    while (st.Length > g_undoMax)
+        st.RemoveAt(1)
+}
+
+UndoDepth(path) {
+    global g_undo
+    return (path != "" && g_undo.Has(path)) ? g_undo[path].Length : 0
+}
+
+UiUndo(*) {
+    global g_undo, g_currentFile, g_recording, g_playing
+    if (g_currentFile = "" || g_recording || g_playing)
+        return
+    if !UndoDepth(g_currentFile) {
+        Notify("Encore: nothing to undo")
+        return
+    }
+    st := g_undo[g_currentFile]
+    txt := st.RemoveAt(st.Length)
+    try {
+        if FileExist(g_currentFile)
+            FileDelete(g_currentFile)
+        FileAppend(txt, g_currentFile, "UTF-8")
+    } catch {
+        Notify("Encore: could not write the macro back")
+        return
+    }
+    SelectMacro(g_currentFile)   ; clears g_events and reloads, as elsewhere
+    PushState()
+    Notify("Undone" (st.Length ? " - " st.Length " more available" : ""), 2000)
+}
+
 WriteMacroFile(path) {
     global g_events, g_curProps
+    PushUndo(path)
     out := ""
     hasProps := false
     for , v in g_curProps
@@ -1204,7 +1311,8 @@ WriteMacroFile(path) {
     if hasProps
         out .= "p`t" g_curProps.Get("repeat", "") "`t" g_curProps.Get("pause", "")
             . "`t" g_curProps.Get("speed", "") "`t" g_curProps.Get("mode", "")
-            . "`t" CleanField(g_curProps.Get("hotkey", "")) "`t" g_curProps.Get("coords", "") "`n"
+            . "`t" CleanField(g_curProps.Get("hotkey", "")) "`t" g_curProps.Get("coords", "")
+            . "`t" g_curProps.Get("moves", "") "`n"
     for e in g_events {
         if (e.kind = "k")
             out .= "k`t" e.t "`t" e.vk "`t" e.sc "`t" (e.up ? 1 : 0) "`n"
@@ -1279,7 +1387,7 @@ LoadMacroFile(path) {
         loop parse FileRead(path, "UTF-8"), "`n", "`r" {
             f := StrSplit(A_LoopField, "`t")
             if (f.Length >= 5 && f[1] = "p") {
-                for i, k in ["repeat", "pause", "speed", "mode", "hotkey", "coords"]
+                for i, k in ["repeat", "pause", "speed", "mode", "hotkey", "coords", "moves"]
                     if (f.Length >= i + 1 && f[i + 1] != "")
                         g_curProps[k] := f[i + 1]
             } else if (f.Length >= 5 && f[1] = "k")
@@ -1336,6 +1444,8 @@ LoadConfig(reread := false) {
         g_macroDir := A_ScriptDir "\macros"
     }
     g_mode := IniRead(g_configFile, "Settings", "Mode", "original") = "fixed" ? "fixed" : "original"
+    g_mouseMoves := (Trim(IniRead(g_configFile, "Settings", "MouseMoves", "all")) = "jump")
+        ? "jump" : "all"
     try g_speed := Number(IniRead(g_configFile, "Settings", "Speed", "1.0"))
     catch
         g_speed := 1.0
@@ -1415,7 +1525,12 @@ WriteDefaultConfig() {
 ; PlayHotkey: plays the last recording. Pressing it during playback - or
 ;   Esc - aborts; pressing it during recording stops the recording.
 ; Mode: original (recorded timing) or fixed (fixed pause between events).
-; Speed: playback speed factor in original mode - 2 = twice as fast.
+; Speed: playback speed factor in original mode - 2 = twice as fast. It scales
+;     the recorded PAUSES only, not the cost of performing each event - see
+;     MouseMoves when a recording is still slow at a high factor.
+; MouseMoves: all = replay every recorded pointer position; jump = replay only
+;     where each run of movement ended. Movement with a button held is always
+;     replayed in full, since there the path is the gesture.
 ; FixedDelayMs: the pause between events in fixed mode.
 ; MaxWaitMs: longest single pause replayed in original mode.
 ; MousePollMs: mouse sampling interval while recording (position/buttons).
@@ -1438,6 +1553,7 @@ RecordHotkey=+F12
 PlayHotkey=F12
 Mode=original
 Speed=1.0
+MouseMoves=all
 FixedDelayMs=50
 MaxWaitMs=5000
 MousePollMs=15
@@ -1612,7 +1728,16 @@ ToggleAutostart(*) {
     if FileExist(lnk) {
         try FileDelete(lnk)
     } else {
-        try FileCreateShortcut(A_AhkPath, lnk, A_ScriptDir, '"' A_ScriptFullPath '"')
+        ; The shortcut points at the SCRIPT, not at AutoHotkey with the script
+        ; as an argument. A_ScriptFullPath is the .ahk when run as a script and
+        ; the .exe when compiled, so one line covers both.
+        ;
+        ; Targeting A_AhkPath breaks on this machine: AutoHotkey is the Store
+        ; Edition, so it lives under Program Files\WindowsApps in a path
+        ; carrying its version number. The next AutoHotkey update changes that
+        ; path and the shortcut silently stops working - with nothing in the
+        ; Startup folder looking wrong.
+        try FileCreateShortcut(A_ScriptFullPath, lnk, A_ScriptDir)
     }
     InitTray()
 }
@@ -1784,6 +1909,7 @@ UiMessage(sender, args) {
         case "saveData": UiSaveData(msg)
         case "moveEvents": UiMoveEvents(msg)
         case "trim": UiTrim()
+        case "undo": UiUndo()
         case "repeatSteps": UiRepeatSteps(msg)
         case "setRepeatCount": UiSetRepeatCount(msg)
         case "queryTask": SetTimer(UiQueryTask, -1)         ; schtasks calls block briefly
@@ -1823,8 +1949,10 @@ PushState() {
     st := Map("recordings", list, "current", cur, "dataText", dataText
         , "recording", g_recording ? 1 : 0, "playing", g_playing ? 1 : 0
         , "macroProps", props, "cliBase", CliBase()
+        , "undoDepth", UndoDepth(g_currentFile)
         , "settings", Map("recordKey", g_recordKey, "playKey", g_playKey
-            , "mode", g_mode, "speed", g_speed, "fixedDelayMs", g_fixedDelayMs
+            , "mode", g_mode, "speed", g_speed, "mouseMoves", g_mouseMoves
+            , "fixedDelayMs", g_fixedDelayMs
             , "repeat", g_repeat, "repeatPauseMs", g_repeatPauseMs
             , "anchors", g_windowAnchors ? 1 : 0, "macroFolder", g_macroDir
             , "countdownMs", g_countdownMs, "playbackOsd", g_playOsd ? 1 : 0))
@@ -2610,7 +2738,7 @@ UiSaveMacroProps(msg) {
     if (g_currentFile = "")
         return
     g_curProps := Map()
-    for k in ["repeat", "pause", "speed", "mode", "hotkey", "coords"]
+    for k in ["repeat", "pause", "speed", "mode", "hotkey", "coords", "moves"]
         if (msg.Has(k) && Trim(msg[k]) != "")
             g_curProps[k] := Trim(msg[k])
     WriteMacroFile(g_currentFile)
@@ -2620,7 +2748,8 @@ UiSaveMacroProps(msg) {
 UiSaveSettings(msg) {
     global g_configFile, g_macroDir
     static PAIRS := Map("recordKey", "RecordHotkey", "playKey", "PlayHotkey"
-        , "mode", "Mode", "speed", "Speed", "fixedDelayMs", "FixedDelayMs"
+        , "mode", "Mode", "speed", "Speed", "mouseMoves", "MouseMoves"
+        , "fixedDelayMs", "FixedDelayMs"
         , "repeat", "Repeat", "repeatPauseMs", "RepeatPauseMs", "anchors", "WindowAnchors"
         , "macroFolder", "MacroFolder", "countdownMs", "CountdownMs", "playbackOsd", "PlaybackOsd")
     prevDir := g_macroDir
