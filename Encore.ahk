@@ -1931,7 +1931,8 @@ PushState() {
     list := []
     for m in ListMacros() {
         info := MacroInfo(m.p)
-        list.Push(Map("name", m.name, "events", info.n, "durMs", info.dur))
+        list.Push(Map("name", m.name, "events", info.n, "durMs", info.dur
+            , "hotkey", info.hk))
     }
     props := Map()
     for k, v in g_curProps
@@ -2064,10 +2065,15 @@ PlayMacroFile(path, *) {
 
 ; Light parse for the sidebar: event count and duration of a macro file.
 MacroInfo(path) {
-    n := 0, tFirst := 0, tLast := 0
+    n := 0, tFirst := 0, tLast := 0, hk := ""
     try {
         loop parse FileRead(path, "UTF-8"), "`n", "`r" {
             f := StrSplit(A_LoopField, "`t")
+            ; the properties line carries the recording's own hotkey (field 6),
+            ; picked up here because the file is open anyway - the list would
+            ; otherwise need a second pass over every macro just to show it
+            if (f.Length >= 6 && f[1] = "p")
+                hk := f[6]
             if (f.Length < 2 || f[1] = "p")
                 continue
             n += 1
@@ -2078,7 +2084,7 @@ MacroInfo(path) {
             tLast := t
         }
     }
-    return {n: n, dur: tLast > tFirst ? tLast - tFirst : 0}
+    return {n: n, dur: tLast > tFirst ? tLast - tFirst : 0, hk: hk}
 }
 
 UiRename(old, newName) {

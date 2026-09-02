@@ -83,7 +83,13 @@ button.primary:hover { background: var(--accent2); }
 #recList li:hover { background: var(--bg3); }
 #recList li { user-select: none; }   /* shift-click selects rows, not text */
 #recList li.selected { background: var(--bg3); border-left-color: var(--accent2); }
-#recList li.multisel { background: var(--bg3); border-left-color: var(--accent); }
+/* Multi-selection shared a background with :hover and .selected, leaving the
+   three states nearly indistinguishable. The inset bar is the actual signal. */
+#recList li.multisel {
+  background: var(--bg3);
+  border-left-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 #recList li.droptarget { background: var(--bg3); border-left-color: var(--green); }
 #steps tr.droprow-above td { border-top: 2px solid var(--green); }
 #steps tr.droprow-below td { border-bottom: 2px solid var(--green); }
@@ -115,6 +121,19 @@ button.primary:hover { background: var(--accent2); }
 .lgc:hover { background: #2a8fd0; }
 #recList li .meta { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
 #recList li .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A recording's own hotkey, shown as a key cap between the name and the
+   event count. Empty for recordings without one, so the column stays quiet. */
+#recList li .hk {
+  font: 10px Consolas, monospace;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  line-height: 14px;
+  white-space: nowrap;
+  flex: none;
+}
+#recList li .hk:empty { display: none; }
 #recList .empty { color: var(--text-dim); font-style: italic; cursor: default; }
 
 #content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -300,6 +319,33 @@ button.danger:not(:disabled):hover { background: var(--red); border-color: #f050
   min-width: 420px;
 }
 .modal-box h2 { font-size: 15px; margin-bottom: 12px; }
+/* The settings dialog explains itself: an intro saying what "global" means
+   against the per-recording row, group headings, and a note under the rows
+   whose behaviour is not obvious from the label alone. */
+.modal-intro {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: -4px 0 14px;
+  max-width: 46em;
+}
+.modal-box .grp {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin: 16px 0 2px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-box .rowhelp {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 2px 0 4px;
+  max-width: 46em;
+}
+#settingsBox { max-height: 82vh; overflow-y: auto; }
 
 /* The list of every Encore schedule, inside the Schedule dialog. */
 #schAllWrap { margin: 14px 0 4px; }

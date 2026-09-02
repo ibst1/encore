@@ -34,7 +34,7 @@
       <button id="btnDelete" class="danger" title="Delete the selected recording(s) - Ctrl/Shift-click in the list to select several"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.3 4.5V3h3.4v1.5M4.5 4.5l.6 9h5.8l.6-9"/></svg>Delete macro</button>
     </div>
     <div id="propsBar">
-      <label>This recording:</label>
+      <label class="bar-label" title="Each field here overrides the matching global setting for this recording only. Leave one empty to use the global value.">This recording</label>
       <label>Repeat <input id="pRepeat" type="text" placeholder="global"></label>
       <label>Pause ms <input id="pPause" type="text" placeholder="global"></label>
       <label>Speed <input id="pSpeed" type="text" placeholder="global"></label>
@@ -59,7 +59,7 @@
         </select>
       </label>
       <button id="btnSaveProps">Save</button>
-      <span class="hint">empty = use the global settings</span>
+      <span class="hint">empty = use the global setting</span>
     </div>
     <!-- Step tools live on their own row: mixing "Delete steps" into the same
          bar as the macro-level "Delete" made it too easy to erase a whole
@@ -183,31 +183,77 @@
 
 <div id="settingsModal" class="modal" hidden>
   <div class="modal-box" id="settingsBox">
-    <h2>Settings</h2>
+    <h2>Global settings</h2>
+    <p class="modal-intro">The defaults every recording starts from. The
+      <b>This recording</b> row above the step list overrides them one field at
+      a time - a field left empty there falls back to the value here, which is
+      what its <i>global</i> placeholder means.</p>
+
+    <div class="grp">Hotkeys</div>
     <div class="row"><label>Record hotkey</label><input id="sRecordKey" type="text"></div>
     <div class="row"><label>Play hotkey</label><input id="sPlayKey" type="text"></div>
+    <p class="rowhelp">Start/stop recording, and play the selected recording.
+      Pressing the play hotkey again during playback aborts it, as does Esc. A
+      recording can also be given a hotkey of its own in the This recording row;
+      that one is an addition, not a replacement for this.</p>
+
+    <div class="grp">Timing</div>
     <div class="row"><label>Playback mode</label>
       <select id="sMode"><option value="original">original timing</option><option value="fixed">fixed delay</option></select>
     </div>
+    <p class="rowhelp"><b>original timing</b> replays the pauses as they were
+      recorded. <b>fixed delay</b> ignores them and waits the same amount
+      between every event.</p>
+
     <div class="row"><label>Speed factor (original mode)</label><input id="sSpeed" type="text"></div>
-    <div class="row"><label title="Speed only shortens the recorded pauses, not the cost of performing each event. Jump replays a run of pointer movement as one jump to where it ended; movement with a button held is always replayed in full, since there the path is the gesture.">Mouse movement</label>
+    <p class="rowhelp">Divides the recorded pauses: 2 = twice as fast. It has no
+      effect in fixed-delay mode, and it cannot speed up the events themselves -
+      a recording that is mostly pointer movement stays slow however high this
+      goes. Mouse movement below is what shortens those.</p>
+
+    <div class="row"><label>Mouse movement</label>
       <select id="sMoves"><option value="all">replay all points</option><option value="jump">jump to where each run ended</option></select></div>
+    <p class="rowhelp"><b>jump</b> replays a run of pointer movement as a single
+      jump to where it ended, instead of retracing every recorded point.
+      Movement with a button held is always replayed in full: there the path is
+      the gesture - a drag-select, a freehand stroke, a slider.</p>
+
     <div class="row"><label>Fixed delay ms</label><input id="sFixedDelay" type="text"></div>
+    <p class="rowhelp">The wait between events in fixed-delay mode. Global only -
+      a recording can choose the mode but not its own delay.</p>
+
+    <div class="grp">Repetition</div>
     <div class="row"><label>Repeat (0 = until aborted)</label><input id="sRepeat" type="text"></div>
     <div class="row"><label>Pause between repeats ms</label><input id="sRepeatPause" type="text"></div>
+    <p class="rowhelp">How many times a recording plays, and the wait between
+      runs. With 0 it repeats until Esc or the play hotkey stops it.</p>
+
+    <div class="grp">Playback behaviour</div>
     <div class="row"><label>Window anchors</label>
       <select id="sAnchors"><option value="1">on</option><option value="0">off</option></select>
     </div>
+    <p class="rowhelp">Before replaying, bring the window the recording was made
+      in back to the front and to its recorded position, so clicks land where
+      they did when recorded.</p>
+
     <div class="row"><label>Countdown before playback ms (0 = off)</label><input id="sCountdown" type="text"></div>
+    <p class="rowhelp">A pause before the first event, to let go of the hotkey
+      and put the pointer where it belongs.</p>
+
     <div class="row"><label>Playback overlay (progress)</label>
       <select id="sOsd"><option value="1">on</option><option value="0">off</option></select>
     </div>
+    <p class="rowhelp">Shows which step is playing, and that Esc aborts.</p>
+
+    <div class="grp">Storage</div>
     <div class="row"><label>Macro folder</label>
       <span>
         <input id="sMacroFolder" type="text" style="width:220px" placeholder="macros (beside the script)">
         <button id="sBrowse">Browse…</button>
       </span>
     </div>
+    <p class="rowhelp">Where recordings are kept. Changing it selects the newest
+      recording in the new folder.</p>
     <div class="btns">
       <button id="btnSettingsCancel">Cancel</button>
       <button id="btnSettingsSave" class="primary">Save</button>

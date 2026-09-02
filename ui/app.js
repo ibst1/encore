@@ -299,11 +299,19 @@ function renderList() {
   state.recordings.forEach((r, i) => {
     const li = document.createElement('li');
     if (r.name === state.current) li.classList.add('selected');
-    if (selMacros.has(r.name)) li.classList.add('multisel');
-    li.innerHTML = '<span class="nm"></span><span class="meta"></span>';
+    // only worth marking when the selection is more than the current row,
+    // which is already marked as current
+    if (selMacros.size > 1 && selMacros.has(r.name)) li.classList.add('multisel');
+    li.innerHTML = '<span class="nm"></span><span class="hk"></span>'
+      + '<span class="meta"></span>';
     li.querySelector('.nm').textContent = r.name;
+    // A recording's own hotkey fires it from anywhere, so which recording has
+    // one is worth seeing without opening each in turn.
+    const hk = prettyHk(r.hotkey);
+    li.querySelector('.hk').textContent = hk || '';
     li.querySelector('.meta').textContent = r.events + ' · ' + fmtDur(r.durMs);
     li.title = 'Double-click or right-click to rename · Ctrl/Shift-click to select several'
+      + (hk ? ' · ' + hk + ' plays this recording from anywhere' : '')
       + (r.name === state.current
           ? ' · ' + (prettyHk((state.settings || {}).playKey) || 'F12') + ' plays this recording'
           : '');
@@ -318,7 +326,13 @@ function renderList() {
         for (let j = a; j <= b; j++) selMacros.add(state.recordings[j].name);
         renderList();
       } else {
+        // A plain click SEEDS the selection with this row rather than just
+        // emptying it. Without that, "click A, Ctrl-click B" left only B
+        // selected and Delete removed one recording - the click that started
+        // the selection was not part of it, which is not how any file list
+        // behaves.
         selMacros.clear();
+        selMacros.add(r.name);
         lastRecIdx = i;
         renderList();                      // clear stale marks before AHK answers
         post({ action: 'select', name: r.name });
