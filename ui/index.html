@@ -38,6 +38,12 @@
       <label>Repeat <input id="pRepeat" type="text" placeholder="global"></label>
       <label>Pause ms <input id="pPause" type="text" placeholder="global"></label>
       <label>Speed <input id="pSpeed" type="text" placeholder="global"></label>
+      <label title="Speed only shortens the recorded pauses. A recording that walks the pointer across the screen is mostly movement, and each point still has to be performed - jump replays only where each run of movement ended. Movement with a button held is always replayed in full.">Mouse moves
+        <select id="pMoves">
+          <option value="">global</option>
+          <option value="all">all points</option>
+          <option value="jump">jump to end</option>
+        </select></label>
       <label>Mode
         <select id="pMode">
           <option value="">global</option>
@@ -66,6 +72,7 @@
       <button id="btnMoveDown" disabled title="Move the selected step down"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M4 9l4 4 4-4"/></svg>Move down</button>
       <button id="btnRepeat" disabled title="Repeat the selected steps a number of times"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.8 8a4.8 4.8 0 1 1-1.4-3.4M12.8 2.6v2.4h-2.4"/></svg>Repeat…</button>
       <button id="btnTrim" title="Remove dead mouse movements at the start and end"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="4" r="1.5"/><circle cx="3.5" cy="12" r="1.5"/><path d="M4.8 4.8L13 11.5M4.8 11.2L13 4.5"/></svg>Trim</button>
+      <button id="btnUndo" disabled title="Undo the last change to this macro"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h7a3 3 0 0 1 0 6H7"/><path d="M6 5L3 8l3 3"/></svg>Undo</button>
       <span class="sep"></span>
       <button id="btnDelSteps" class="danger" disabled title="Delete the selected step(s)"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.3 4.5V3h3.4v1.5M4.5 4.5l.6 9h5.8l.6-9"/></svg>Delete step</button>
     </div>
@@ -183,6 +190,8 @@
       <select id="sMode"><option value="original">original timing</option><option value="fixed">fixed delay</option></select>
     </div>
     <div class="row"><label>Speed factor (original mode)</label><input id="sSpeed" type="text"></div>
+    <div class="row"><label title="Speed only shortens the recorded pauses, not the cost of performing each event. Jump replays a run of pointer movement as one jump to where it ended; movement with a button held is always replayed in full, since there the path is the gesture.">Mouse movement</label>
+      <select id="sMoves"><option value="all">replay all points</option><option value="jump">jump to where each run ended</option></select></div>
     <div class="row"><label>Fixed delay ms</label><input id="sFixedDelay" type="text"></div>
     <div class="row"><label>Repeat (0 = until aborted)</label><input id="sRepeat" type="text"></div>
     <div class="row"><label>Pause between repeats ms</label><input id="sRepeatPause" type="text"></div>

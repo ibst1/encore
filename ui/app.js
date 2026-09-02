@@ -592,6 +592,14 @@ function renderState() {
                     'btnTrim', 'btnSchedule', 'btnSaveProps', 'btnSaveData',
                     'btnCliHelp'])
     document.getElementById(id).disabled = noMacro;
+  // Undo is the one button whose availability is not just "a macro is open":
+  // it depends on whether this macro has anything left to undo.
+  const undoDepth = state.undoDepth || 0;
+  const undoBtn = document.getElementById('btnUndo');
+  undoBtn.disabled = noMacro || undoDepth === 0;
+  undoBtn.title = undoDepth
+    ? `Undo the last change to this macro (${undoDepth} available)`
+    : 'Nothing to undo';
   // hotkey tooltips reflect whatever keys are configured
   const pk = prettyHk((state.settings || {}).playKey) || 'F12';
   const rk = prettyHk((state.settings || {}).recordKey) || 'Shift+F12';
@@ -613,6 +621,7 @@ function renderState() {
     document.getElementById('pMode').value = p.mode || '';
     document.getElementById('pHotkey').value = p.hotkey || '';
     document.getElementById('pCoords').value = p.coords || '';
+    document.getElementById('pMoves').value = p.moves || '';
   }
   const dt = document.getElementById('dataText');
   if (document.activeElement !== dt)   // don't clobber while the user types
@@ -792,6 +801,9 @@ window.addEventListener('DOMContentLoaded', () => {
     post({ action: 'copyText', text: $('cliRunCmd').textContent }));
   $('cliReadme').addEventListener('click', () => post({ action: 'openReadme' }));
   $('cliClose').addEventListener('click', () => { $('cliModal').hidden = true; });
+  $('btnUndo').addEventListener('click', () => {
+    if (state && state.current) post({ action: 'undo' });
+  });
   $('btnTrim').addEventListener('click', () => {
     if (state && state.current) post({ action: 'trim' });
   });
@@ -830,10 +842,12 @@ window.addEventListener('DOMContentLoaded', () => {
     post({ action: 'saveMacroSettings',
       repeat: $('pRepeat').value.trim(), pause: $('pPause').value.trim(),
       speed: $('pSpeed').value.trim(), mode: $('pMode').value,
-      hotkey: $('pHotkey').value.trim(), coords: $('pCoords').value });
+      hotkey: $('pHotkey').value.trim(), coords: $('pCoords').value,
+      moves: $('pMoves').value });
   };
   let propsSaveTimer = null;
-  for (const id of ['pRepeat', 'pPause', 'pSpeed', 'pMode', 'pHotkey', 'pCoords']) {
+  for (const id of ['pRepeat', 'pPause', 'pSpeed', 'pMode', 'pHotkey', 'pCoords',
+                    'pMoves']) {
     const el = $(id);
     el.addEventListener('input', () => {
       propsDirty = true;
@@ -850,6 +864,7 @@ window.addEventListener('DOMContentLoaded', () => {
     $('sPlayKey').value = s.playKey;
     $('sMode').value = s.mode;
     $('sSpeed').value = s.speed;
+    $('sMoves').value = s.mouseMoves || 'all';
     $('sFixedDelay').value = s.fixedDelayMs;
     $('sRepeat').value = s.repeat;
     $('sRepeatPause').value = s.repeatPauseMs;
@@ -865,6 +880,7 @@ window.addEventListener('DOMContentLoaded', () => {
     post({ action: 'saveSettings',
       recordKey: $('sRecordKey').value.trim(), playKey: $('sPlayKey').value.trim(),
       mode: $('sMode').value, speed: $('sSpeed').value.trim(),
+      mouseMoves: $('sMoves').value,
       fixedDelayMs: $('sFixedDelay').value.trim(), repeat: $('sRepeat').value.trim(),
       repeatPauseMs: $('sRepeatPause').value.trim(), anchors: $('sAnchors').value,
       countdownMs: $('sCountdown').value.trim(), playbackOsd: $('sOsd').value,
