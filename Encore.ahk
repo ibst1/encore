@@ -68,6 +68,7 @@ global g_repeatPauseMs := 1000
 global g_countdownMs   := 1000 ; pause before playback starts (0 = none)
 global g_playOsd       := true ; progress overlay during playback
 global g_macroHotkeys  := Map()  ; registered per-macro hotkey -> file path
+global g_abortWild     := ""   ; wildcard variant of the play key, on only during playback
 global g_fgX           := 0    ; recording: position of the foreground window
 global g_fgY           := 0
 global g_playRef       := 0    ; playback: hwnd of the last activated anchor window
@@ -774,6 +775,7 @@ Play(*) {
     }
     g_playing := true
     g_stopPlay := false
+    SetAbortHotkey(true)   ; *F12 catches the stop key under replayed modifiers
     ; Annonsera uppspelningen för andra skript: Keyboard assistants vakthund
     ; släpper annars "fastnade" modifierare - och en uppspelad Ctrl+C håller
     ; Ctrl syntetiskt nere i mänsklig takt, längre än dess 300 ms-gräns, så
@@ -799,6 +801,7 @@ Play(*) {
         ToolTip(, , , 2)
         if (g_stopPlay || GetKeyState("Escape", "P")) {
             g_playing := false
+            SetAbortHotkey(false)
             InitTray()
             Notify("■ Playback aborted", 1500)
             return
@@ -821,6 +824,7 @@ Play(*) {
         if !dataRows.Length {
             Notify("Encore: the macro has a {value} step but the data list is empty")
             g_playing := false
+            SetAbortHotkey(false)
             InitTray()
             return
         }
@@ -1043,6 +1047,7 @@ Play(*) {
         g_playMutex := 0
     }
     g_playing := false
+    SetAbortHotkey(false)
     InitTray()
     if err {
         LogError(err, "")
@@ -1486,13 +1491,26 @@ LoadConfig(reread := false) {
         InitTray()
 }
 
-; Registreras med *-prefix (ignorera extra modifierare): under uppspelning av
-; ett makro med Ctrl ligger Ctrl LOGISKT nere när användaren trycker F12 -
-; hooken ser då Ctrl+F12, som inte matchar "F12", och stoppet uteblir. Med *
-; träffar tangenten oavsett vilka modifierare uppspelningen råkar hålla.
-; (~ hade inte hjälpt: pass-through ändrar inte matchningen.) De lagrade/
-; visade namnen behåller sin form utan prefix.
-_Wild(hk) => (hk != "" && SubStr(hk, 1, 1) != "*") ? "*" hk : hk
+; Hotkeys registreras EXAKT (F12 träffar bara F12, inte Alt+F12 - en
+; *-variant året runt svalde Alt/Ctrl/Win+F12 från andra program). Under
+; uppspelning av ett makro med Ctrl ligger Ctrl däremot LOGISKT nere när
+; användaren trycker F12 - hooken ser Ctrl+F12, som inte matchar "F12", och
+; stoppet uteblir. Därför slås en wildcard-variant (*F12) på BARA medan
+; uppspelningen pågår; den exakta varianten har företräde när den matchar.
+; (~ hade inte hjälpt: pass-through ändrar inte matchningen.)
+SetAbortHotkey(on) {
+    global g_abortWild, g_playKey
+    if g_abortWild {
+        try Hotkey(g_abortWild, "Off")
+        g_abortWild := ""
+    }
+    if (!on || g_playKey = "" || SubStr(g_playKey, 1, 1) = "*")
+        return
+    try {
+        Hotkey("*" g_playKey, Play, "On")
+        g_abortWild := "*" g_playKey
+    }
+}
 
 ApplyHotkey(&stored, newKey, fn) {
     if g_cliMode {   ; a CLI run must not fight the tray instance's hotkeys
@@ -1500,10 +1518,10 @@ ApplyHotkey(&stored, newKey, fn) {
         return
     }
     if (stored != "" && stored != newKey)
-        try Hotkey(_Wild(stored), "Off")
+        try Hotkey(stored, "Off")
     if (newKey != "") {
         try {
-            Hotkey(_Wild(newKey), fn, "On")
+            Hotkey(newKey, fn, "On")
             stored := newKey
         } catch {
             Notify("Encore: invalid hotkey in the config: " newKey)
@@ -2040,14 +2058,14 @@ SyncMacroHotkeys() {
     }
     for hk, path in g_macroHotkeys.Clone() {
         if (!wanted.Has(hk) || wanted[hk] != path) {
-            try Hotkey(_Wild(hk), "Off")
+            try Hotkey(hk, "Off")
             g_macroHotkeys.Delete(hk)
         }
     }
     for hk, path in wanted {
         if !g_macroHotkeys.Has(hk) {
             try {
-                Hotkey(_Wild(hk), PlayMacroFile.Bind(path), "On")
+                Hotkey(hk, PlayMacroFile.Bind(path), "On")
                 g_macroHotkeys[hk] := path
             } catch {
                 Notify("Encore: invalid macro hotkey: " hk)
