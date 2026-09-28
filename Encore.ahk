@@ -1761,7 +1761,31 @@ ToggleAutostart(*) {
 }
 
 ; ── Management window (WebView2, same architecture as Expanto) ──────────
-; Created lazily on first open; closing hides it so reopening is instant.
+; Created lazily on first open; closing hides it so reopening is instant -
+; for ten minutes. Then the WebView2 is let go (UiReleaseCheck): its
+; half-dozen browser processes hold some 250 MB, which on a full machine
+; is paging. The next OpenUi creates window and WebView2 again.
+UI_RELEASE_MS := 600000
+SetTimer(UiReleaseCheck, 30000)
+
+UiReleaseCheck() {
+    global g_uiWin, g_uiCtrl, g_uiCore, g_uiReady
+    static lastShown := A_TickCount
+    if (!g_uiWin)
+        return
+    if DllCall("IsWindowVisible", "ptr", g_uiWin.Hwnd) {
+        lastShown := A_TickCount
+        return
+    }
+    if (A_TickCount - lastShown < UI_RELEASE_MS)
+        return
+    g_uiReady := false
+    try g_uiCtrl.Close()
+    g_uiCore := 0, g_uiCtrl := 0
+    try g_uiWin.Destroy()
+    g_uiWin := 0
+}
+
 OpenUi(*) {
     global g_uiWin, g_uiCtrl, g_uiCore
     if !g_uiWin {
